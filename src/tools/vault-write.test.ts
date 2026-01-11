@@ -15,19 +15,8 @@ describe("vault-write-tool", () => {
   });
 
   after(async () => {
-    // Clean up only the files we created, not the entire test vault
-    try {
-      await rm(join(TEST_VAULT_PATH, "Tasks"), {
-        recursive: true,
-        force: true,
-      });
-      await rm(join(TEST_VAULT_PATH, "Ideas"), {
-        recursive: true,
-        force: true,
-      });
-    } catch {
-      // Ignore cleanup errors
-    }
+    // Don't delete folders - other tests may need them
+    // Files will be cleaned up automatically or by the test vault cleanup
   });
 
   describe("vaultWrite", () => {
