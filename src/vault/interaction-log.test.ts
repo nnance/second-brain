@@ -75,10 +75,13 @@ describe("interaction-log", () => {
     });
 
     after(async () => {
-      // Clean up test files
+      // Clean up only the specific test files, not the entire folder
+      // (other tests may be using this folder concurrently)
       try {
-        await rm(`${testVaultPath}/_system/logs`, {
-          recursive: true,
+        await rm(`${testVaultPath}/_system/logs/2026-01-15.md`, {
+          force: true,
+        });
+        await rm(`${testVaultPath}/_system/logs/2026-01-16.md`, {
           force: true,
         });
       } catch {
