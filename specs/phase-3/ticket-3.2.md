@@ -1,207 +1,107 @@
-# Ticket 3.2: Tool Schema Definitions
+# Ticket 3.2: Implement vault_read Tool
 
 ## Description
-Define the tool schemas in the Anthropic API format. These schemas describe each tool's name, description, and parameters so Claude can understand when and how to use them. The schemas are passed to the Claude API on each request.
+Create the `vault_read` tool that enables the AI agent to read existing notes from the Obsidian vault. This allows the agent to check for related notes, read previous context, or verify stored content.
 
 ## Acceptance Criteria
-- [ ] Tool definitions module exists at `src/agent/tools.ts`
-- [ ] All five tools defined with JSON Schema parameters
-- [ ] Descriptions are clear and help Claude understand when to use each tool
-- [ ] Parameter schemas match the tool implementations from Phase 2
-- [ ] Exports array of tools for use in API calls
-- [ ] Unit tests verify schema structure
+- [ ] Tool exists at `src/tools/vault-read.ts`
+- [ ] Accepts filepath relative to vault root
+- [ ] Returns file content including frontmatter
+- [ ] Handles file not found gracefully
+- [ ] Returns structured result with success status
+- [ ] Never throws—returns error in result object
+- [ ] Validates path to prevent directory traversal
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### Tool Schema Format
-Each tool follows the Anthropic tool format:
+### Tool Interface
 ```typescript
-interface Tool {
-  name: string;
-  description: string;
-  input_schema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required: string[];
-  };
+// src/tools/vault-read.ts
+
+export interface VaultReadParams {
+  filepath: string;  // Path relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"
+}
+
+export interface VaultReadResult {
+  success: boolean;
+  content?: string;
+  error?: string;
+}
+
+export async function vaultRead(params: VaultReadParams): Promise<VaultReadResult> {
+  // Implementation
 }
 ```
 
-### src/agent/tools.ts
+### Implementation
 ```typescript
-import type { Tool } from '@anthropic-ai/sdk/resources/messages';
+import { readFile } from 'node:fs/promises';
+import { join, normalize } from 'node:path';
+import { config } from '../config.js';
+import logger from '../logger.js';
 
-export const TOOLS: Tool[] = [
-  {
-    name: 'vault_write',
-    description: `Create a new note in the Obsidian vault. Use this to store captured thoughts, tasks, ideas, or references.
+export async function vaultRead(params: VaultReadParams): Promise<VaultReadResult> {
+  try {
+    const { filepath } = params;
 
-Choose the appropriate folder:
-- Tasks: Actionable items, reminders, follow-ups
-- Ideas: Thoughts to explore, creative sparks, concepts
-- Reference: Links, articles, facts to save
-- Projects: Items related to multi-step initiatives
-- Inbox: Only if genuinely uncertain about categorization
-- Archive: Completed or inactive items
+    // Validate path (prevent directory traversal)
+    if (!isValidVaultPath(filepath)) {
+      return {
+        success: false,
+        error: 'Invalid path: directory traversal not allowed',
+      };
+    }
 
-Always assign relevant tags and a confidence score reflecting how certain you are about the categorization.`,
-    input_schema: {
-      type: 'object',
-      properties: {
-        folder: {
-          type: 'string',
-          enum: ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'],
-          description: 'The folder to store the note in',
-        },
-        title: {
-          type: 'string',
-          description: 'A concise, descriptive title for the note',
-        },
-        content: {
-          type: 'string',
-          description: 'The markdown content of the note (without frontmatter)',
-        },
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Tags without # prefix. Use hierarchical format: person/sarah, project/security-audit, topic/security, priority/high, status/waiting',
-        },
-        confidence: {
-          type: 'number',
-          minimum: 0,
-          maximum: 100,
-          description: 'Confidence score (0-100) for the categorization',
-        },
-      },
-      required: ['folder', 'title', 'content', 'tags', 'confidence'],
-    },
-  },
-  {
-    name: 'vault_read',
-    description: 'Read an existing note from the vault. Use this to check related notes, verify stored content, or get context about previous captures.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        filepath: {
-          type: 'string',
-          description: 'Path relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"',
-        },
-      },
-      required: ['filepath'],
-    },
-  },
-  {
-    name: 'vault_list',
-    description: 'List notes in the vault. Use this to find related notes, check for potential duplicates, or browse existing content before creating new notes.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        folder: {
-          type: 'string',
-          description: 'Folder to list (omit for all content folders)',
-        },
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Filter by tags (all must match)',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results (default 20)',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'log_interaction',
-    description: `Record this interaction in the daily log. ALWAYS call this tool to maintain an audit trail. Include:
-- The user's original input
-- Your categorization decision and reasoning
-- Tags assigned
-- Where the note was stored
-- Any clarification questions asked`,
-    input_schema: {
-      type: 'object',
-      properties: {
-        input: {
-          type: 'string',
-          description: "User's original message",
-        },
-        category: {
-          type: 'string',
-          description: 'Assigned category (Tasks, Ideas, Reference, Projects, Inbox)',
-        },
-        confidence: {
-          type: 'number',
-          description: 'Confidence score (0-100)',
-        },
-        reasoning: {
-          type: 'string',
-          description: 'Brief explanation of categorization decision',
-        },
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Tags assigned to the note',
-        },
-        stored_path: {
-          type: 'string',
-          description: 'Where the note was stored',
-        },
-        clarification: {
-          type: 'string',
-          description: 'Clarification question asked (if any)',
-        },
-        user_response: {
-          type: 'string',
-          description: "User's response to clarification (if any)",
-        },
-      },
-      required: ['input'],
-    },
-  },
-  {
-    name: 'send_message',
-    description: `Send a message to the user via iMessage. Use this to:
-- Confirm successful storage: "Got it! Saved as a task to follow up with Sarah."
-- Ask clarifying questions: "Is this a link to save or a concept to research?"
-- Provide feedback: "I've added this to your Reference folder with tags #topic/security."
+    const fullPath = join(config.vaultPath, filepath);
+    const content = await readFile(fullPath, 'utf-8');
 
-Keep messages concise and helpful.`,
-    input_schema: {
-      type: 'object',
-      properties: {
-        message: {
-          type: 'string',
-          description: 'The message to send to the user',
-        },
-      },
-      required: ['message'],
-    },
-  },
-];
+    logger.debug({ filepath }, 'vault_read: Note read');
 
-// Export individual tool names for type safety
-export type ToolName = 'vault_write' | 'vault_read' | 'vault_list' | 'log_interaction' | 'send_message';
+    return {
+      success: true,
+      content,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      logger.debug({ filepath: params.filepath }, 'vault_read: File not found');
+      return {
+        success: false,
+        error: `File not found: ${params.filepath}`,
+      };
+    }
+
+    logger.error({ error, params }, 'vault_read: Failed');
+    return {
+      success: false,
+      error: message,
+    };
+  }
+}
+
+function isValidVaultPath(filepath: string): boolean {
+  const normalized = normalize(filepath);
+  return !normalized.startsWith('..') && !normalized.includes('../');
+}
 ```
 
-### Tool Description Guidelines
-- Describe WHEN to use the tool, not just WHAT it does
-- Include examples of appropriate usage
-- Mention constraints and expectations
-- Guide Claude toward good decisions
+### Security Consideration
+- Validate that filepath doesn't escape vault directory (no `../` traversal)
+- Normalize path before validation
 
-### Unit Tests: src/agent/tools.test.ts
+### Unit Tests: src/tools/vault-read.test.ts
 Test cases:
-- All tools have name, description, input_schema
-- Required fields are specified correctly
-- Property types match expected formats
-- Enum values are correct for vault_write folder
+- Reads existing file successfully
+- Returns content with frontmatter intact
+- Returns error for non-existent file
+- Blocks path traversal attempts (`../etc/passwd`)
+- Handles files in nested folders (`_system/logs/2026-01-10.md`)
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, tools tests pass
-3. File `src/agent/tools.ts` exists
-4. Tests exist in `src/agent/tools.test.ts`
-5. TOOLS array contains exactly 5 tools
+2. Run `npm test` — exits 0, vault-read tests pass
+3. File `src/tools/vault-read.ts` exists
+4. Tests exist in `src/tools/vault-read.test.ts`
+5. Manual test: create a test file, read it with the tool, verify content matches

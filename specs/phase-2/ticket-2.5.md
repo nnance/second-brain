@@ -1,148 +1,125 @@
-# Ticket 2.5: Implement vault_list Tool
+# Ticket 2.5: Wire iMessage Listener to File Writer
 
 ## Description
-Create the `vault_list` tool that the AI agent uses to discover existing notes in the vault. This enables the agent to find related notes, check for duplicates, or browse content by folder or tags. Returns file metadata without full content.
+Connect the iMessage listener from Phase 1 to the file writer and interaction log from this phase. When a message is received, it should be written to `Inbox/` and logged. This completes the basic capture pipeline.
 
 ## Acceptance Criteria
-- [ ] Tool exists at `src/tools/vault-list.ts`
-- [ ] Lists files in specified folder (or all folders if not specified)
-- [ ] Optionally filters by tags
-- [ ] Returns file metadata: filepath, title, tags, created date
-- [ ] Supports limit parameter for result count
-- [ ] Returns structured result with success status
-- [ ] Never throws—returns error in result object
-- [ ] Comprehensive unit tests
+- [ ] Message handler calls file writer with message content
+- [ ] Message handler calls interaction log writer
+- [ ] Files are created in `Inbox/` folder
+- [ ] Interaction log is updated on each capture
+- [ ] Errors in writing don't crash the listener
+- [ ] End-to-end flow works: text → file in vault + log entry
 
 ## Technical Notes
 
-### Tool Interface
-```typescript
-// src/tools/vault-list.ts
-
-export interface VaultListParams {
-  folder?: string;      // Folder to list (all content folders if omitted)
-  tags?: string[];      // Filter by tags (AND logic - must have all)
-  limit?: number;       // Max results (default 20)
-}
-
-export interface VaultFileInfo {
-  filepath: string;
-  title: string;
-  tags: string[];
-  created: string;      // ISO date string
-}
-
-export interface VaultListResult {
-  success: boolean;
-  files?: VaultFileInfo[];
-  error?: string;
-}
-
-export async function vaultList(params: VaultListParams): Promise<VaultListResult> {
-  // Implementation
-}
+### Updated Message Handler Flow
+```
+iMessage received
+    │
+    ▼
+Create note metadata
+    │
+    ▼
+Write note to Inbox/
+    │
+    ▼
+Write interaction log
+    │
+    ▼
+Log success
 ```
 
-### Implementation Strategy
-1. Determine folders to scan (specified folder or all content folders)
-2. Read all `.md` files in those folders
-3. Parse frontmatter to extract metadata
-4. Filter by tags if specified
-5. Sort by created date (newest first)
-6. Apply limit
-
-### Content Folders
+### src/index.ts Update
 ```typescript
-const CONTENT_FOLDERS = ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'];
-```
+import logger from './logger.js';
+import { config } from './config.js';
+import { startListener, stopListener } from './messages/listener.js';
+import { writeNote } from './vault/writer.js';
+import { writeInteractionLog } from './vault/interaction-log.js';
 
-### Frontmatter Parsing
-Use a simple YAML frontmatter parser or regex to extract:
-- `created` field
-- `tags` array
+logger.info({ vaultPath: config.vaultPath }, 'second-brain starting...');
 
-```typescript
-function parseFrontmatter(content: string): { created?: string; tags?: string[] } {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
+startListener({
+  onMessage: async (message) => {
+    const timestamp = new Date();
 
-  const yaml = match[1];
-  // Parse created and tags from yaml string
-  // Consider using a lightweight YAML parser like 'yaml' package
-}
-```
+    try {
+      // Write note to Inbox
+      const result = await writeNote({
+        folder: 'Inbox',
+        title: message.text.slice(0, 50), // Use first 50 chars as title
+        body: message.text,
+        metadata: {
+          created: timestamp,
+          source: 'imessage',
+          confidence: null,
+          tags: [],
+        },
+      });
 
-### Implementation Skeleton
-```typescript
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { config } from '../config.js';
-import logger from '../logger.js';
+      // Write interaction log
+      await writeInteractionLog({
+        timestamp,
+        input: message.text,
+        storedPath: `Inbox/${result.fileName}`,
+      });
 
-const CONTENT_FOLDERS = ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'];
+      logger.info({
+        event: 'message_captured',
+        sender: message.sender,
+        filePath: result.filePath,
+      }, 'Message captured successfully');
 
-export async function vaultList(params: VaultListParams): Promise<VaultListResult> {
-  try {
-    const { folder, tags, limit = 20 } = params;
-
-    const foldersToScan = folder ? [folder] : CONTENT_FOLDERS;
-    const allFiles: VaultFileInfo[] = [];
-
-    for (const folderName of foldersToScan) {
-      const folderPath = join(config.vaultPath, folderName);
-      const files = await scanFolder(folderPath, folderName);
-      allFiles.push(...files);
+    } catch (error) {
+      logger.error({
+        event: 'capture_failed',
+        sender: message.sender,
+        error,
+      }, 'Failed to capture message');
     }
-
-    // Filter by tags if specified
-    let filtered = allFiles;
-    if (tags && tags.length > 0) {
-      filtered = allFiles.filter(file =>
-        tags.every(tag => file.tags.includes(tag))
-      );
-    }
-
-    // Sort by created date (newest first)
-    filtered.sort((a, b) => b.created.localeCompare(a.created));
-
-    // Apply limit
-    const result = filtered.slice(0, limit);
-
-    logger.debug({ folder, tags, resultCount: result.length }, 'vault_list: Listed files');
-
-    return {
-      success: true,
-      files: result,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ error, params }, 'vault_list: Failed');
-    return {
-      success: false,
-      error: message,
-    };
   }
-}
+});
 
-async function scanFolder(folderPath: string, folderName: string): Promise<VaultFileInfo[]> {
-  // Read directory, filter .md files, parse each file's frontmatter
-}
+// Graceful shutdown
+process.on('SIGINT', () => {
+  logger.info('Shutting down...');
+  stopListener();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('Shutting down...');
+  stopListener();
+  process.exit(0);
+});
 ```
 
-### Unit Tests: src/tools/vault-list.test.ts
-Test cases:
-- Lists all files when no folder specified
-- Lists files from specific folder
-- Filters by single tag
-- Filters by multiple tags (AND logic)
-- Respects limit parameter
-- Returns empty array for empty folder
-- Handles missing folder gracefully
-- Sorts by created date (newest first)
+### Title Extraction Strategy
+For Phase 2, use a simple approach:
+- Take first 50 characters of the message
+- This becomes both the title and the slug basis
+
+Phase 3 will refactor this to use agent tools for intelligent categorization.
+
+### Error Handling
+- Wrap the entire capture flow in try/catch
+- Log errors but don't crash
+- Listener continues running after individual message failures
+
+### Integration Test Suggestion
+Consider adding a manual integration test script:
+```typescript
+// src/scripts/test-capture.ts
+// Simulates a message and verifies file creation
+```
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, vault-list tests pass
-3. File `src/tools/vault-list.ts` exists
-4. Tests exist in `src/tools/vault-list.test.ts`
-5. Manual test: create test files, verify listing and filtering works
+2. Run `npm test` — exits 0
+3. With `VAULT_PATH` set and vault initialized:
+   - Run `npm start`
+   - Send a text to the dedicated iMessage account
+   - Verify file appears in `${VAULT_PATH}/Inbox/`
+   - Verify log entry appears in `${VAULT_PATH}/_system/logs/YYYY-MM-DD.md`
+4. Check that frontmatter contains: created, source, confidence, tags

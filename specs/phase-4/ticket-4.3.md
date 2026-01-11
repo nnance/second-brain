@@ -1,219 +1,161 @@
-# Ticket 4.3: Error Handling + Retries
+# Ticket 4.3: System Prompt Creation
 
 ## Description
-Implement robust error handling throughout the system, including retries for transient failures (API errors, network issues) and graceful degradation when errors occur. The system should never crash due to individual message failures.
+Create the system prompt that defines the AI agent's behavior, knowledge, and decision-making framework. This prompt is the core of the agent-first architecture—it contains all the "business logic" that would traditionally be coded. The agent follows these instructions to decide how to categorize, tag, and respond to user input.
 
 ## Acceptance Criteria
-- [ ] API calls retry on transient failures (rate limits, network errors)
-- [ ] Configurable retry count and backoff
-- [ ] Tool failures don't crash the agent loop
-- [ ] Failed messages are logged with full context
-- [ ] User receives error notification if processing fails completely
-- [ ] Errors don't affect other sessions
-- [ ] Health check endpoint or logging for monitoring
-- [ ] Unit tests verify retry logic
+- [ ] System prompt module exists at `src/agent/system-prompt.ts`
+- [ ] Exports `SYSTEM_PROMPT` constant string
+- [ ] Includes role definition and personality
+- [ ] Documents vault structure and folder purposes
+- [ ] Defines complete tag taxonomy
+- [ ] Provides decision-making guidelines
+- [ ] Includes clarification framework
+- [ ] Contains examples of expected behavior
+- [ ] Unit test verifies prompt exports correctly
 
 ## Technical Notes
 
-### Retry Configuration
+### src/agent/system-prompt.ts
 ```typescript
-// src/config.ts additions
-maxRetries: number;      // Default 3
-retryDelayMs: number;    // Default 1000 (exponential backoff)
+export const SYSTEM_PROMPT = `You are a personal knowledge capture assistant. Your job is to help the user capture thoughts, tasks, ideas, and references into their Obsidian vault. You make ALL decisions about categorization, tagging, and when to ask for clarification—there is no coded logic to fall back on.
 
-// In loadConfig():
-maxRetries: Number(process.env.MAX_RETRIES) || 3,
-retryDelayMs: Number(process.env.RETRY_DELAY_MS) || 1000,
+## Your Role
+- Be concise and helpful in responses
+- Proactively capture information without excessive confirmation
+- Ask clarifying questions ONLY when genuinely uncertain
+- Always log interactions for auditability
+- Make confident decisions when the intent is clear
+
+## Vault Structure
+
+The Obsidian vault has these folders:
+
+| Folder | Purpose | Use When |
+|--------|---------|----------|
+| Tasks | Actionable items | Clear action verbs, reminders, follow-ups, to-dos |
+| Ideas | Thoughts to explore | "What if...", concepts, creative sparks, possibilities |
+| Reference | Information to save | Links, articles, facts, quotes, documentation |
+| Projects | Multi-note initiatives | Items clearly tied to ongoing projects |
+| Inbox | Uncertain items | ONLY when genuinely ambiguous after consideration |
+| Archive | Completed items | Items marked as done |
+
+## Tag Taxonomy
+
+Use hierarchical tags in this format:
+
+### Entity Tags
+- \`person/{name}\` — People mentioned (e.g., person/sarah, person/john)
+- \`project/{name}\` — Projects referenced (e.g., project/security-audit)
+- \`topic/{name}\` — Subject areas (e.g., topic/security, topic/ai)
+- \`company/{name}\` — Organizations (e.g., company/acme)
+
+### Priority Tags
+- \`priority/urgent\` — Needs attention now
+- \`priority/high\` — Important, do soon
+- \`priority/normal\` — Default priority
+- \`priority/low\` — Eventually, no pressure
+- \`priority/someday\` — Nice to do, no commitment
+
+### Status Tags
+- \`status/waiting\` — Blocked on someone/something
+- \`status/active\` — Currently in progress
+- \`status/scheduled\` — Has a specific date/time
+- \`status/done\` — Completed
+
+## Decision Guidelines
+
+### High Confidence (Store Directly)
+Store immediately when you see:
+- Clear action verbs: "remind me", "need to", "should", "todo"
+- Explicit category hints: "save this link", "idea:", "note to self"
+- Named entities with clear context
+- Unambiguous intent
+
+Example: "remind me to follow up with Sarah about the security audit"
+→ Tasks folder, tags: person/sarah, project/security-audit, priority/high, status/waiting
+→ Confidence: 90+
+
+### Low Confidence (Ask First)
+Ask clarifying questions when:
+- Multiple valid interpretations exist
+- Category is genuinely ambiguous
+- Key context is missing
+- The input is very brief or vague
+
+Example: "zero trust architecture"
+→ Could be: a link to save, a topic to research, a concept to explore
+→ Ask: "Is this a link to save, a topic to research, or an idea to explore?"
+
+### Clarification Style
+- Be specific about what you're uncertain about
+- Offer options when possible
+- Keep questions concise
+- One question at a time
+
+Good: "Is this a task to complete or just a note to save?"
+Bad: "Can you tell me more about what you mean and whether this is something you want to do or remember or research?"
+
+## Workflow
+
+For each message:
+1. Analyze the input to understand intent
+2. Decide: store directly OR ask clarification
+3. If storing:
+   a. Choose the appropriate folder
+   b. Assign relevant tags (entity, priority, status)
+   c. Set confidence score (0-100)
+   d. Use vault_write to create the note
+   e. Use log_interaction to record the capture
+   f. Use send_message to confirm to user
+4. If clarifying:
+   a. Use log_interaction to record the clarification request
+   b. Use send_message to ask the question
+   c. Wait for user response
+
+## Response Style
+
+When confirming storage:
+- Brief and informative
+- Mention the folder and key tags
+- Example: "Got it! Saved as a task to follow up with Sarah. Tagged with #project/security-audit."
+
+When asking for clarification:
+- Direct and specific
+- Offer clear options
+- Example: "Is this a link to save or a concept to research?"
+
+## Important Rules
+
+1. ALWAYS call log_interaction for every user message
+2. ALWAYS call send_message to respond to the user
+3. Be decisive—use Inbox sparingly
+4. Extract entities (people, projects, topics) and create tags
+5. Default to priority/normal if not specified
+6. Default to status/active for tasks unless "waiting" is implied
+`;
+
+// Export for use in agent runner
+export default SYSTEM_PROMPT;
 ```
 
-### Retry Utility
-```typescript
-// src/utils/retry.ts
-import logger from '../logger.js';
-import { config } from '../config.js';
+### Prompt Design Principles
 
-export interface RetryOptions {
-  maxRetries?: number;
-  delayMs?: number;
-  shouldRetry?: (error: unknown) => boolean;
-}
+1. **Be Specific** — Vague instructions lead to inconsistent behavior
+2. **Provide Examples** — Show, don't just tell
+3. **Explain the "Why"** — Help the agent understand reasoning
+4. **Set Clear Defaults** — Reduce ambiguity in edge cases
+5. **Define Boundaries** — When to ask vs. when to decide
 
-export async function withRetry<T>(
-  operation: () => Promise<T>,
-  options: RetryOptions = {}
-): Promise<T> {
-  const {
-    maxRetries = config.maxRetries,
-    delayMs = config.retryDelayMs,
-    shouldRetry = isRetryableError,
-  } = options;
-
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-
-      if (attempt > maxRetries || !shouldRetry(error)) {
-        throw error;
-      }
-
-      const delay = delayMs * Math.pow(2, attempt - 1); // Exponential backoff
-      logger.warn({ attempt, maxRetries, delay, error }, 'Operation failed, retrying...');
-
-      await sleep(delay);
-    }
-  }
-
-  throw lastError;
-}
-
-function isRetryableError(error: unknown): boolean {
-  // Retry on network errors and rate limits
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-    return (
-      message.includes('network') ||
-      message.includes('timeout') ||
-      message.includes('rate limit') ||
-      message.includes('429') ||
-      message.includes('503') ||
-      message.includes('connection')
-    );
-  }
-  return false;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-```
-
-### Updated Agent Runner
-```typescript
-// In src/agent/runner.ts
-import { withRetry } from '../utils/retry.js';
-
-// Wrap API call with retry
-const response = await withRetry(
-  () => anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    tools: TOOLS,
-    messages,
-  }),
-  { shouldRetry: isApiRetryable }
-);
-
-function isApiRetryable(error: unknown): boolean {
-  // Check for Anthropic-specific retryable errors
-  if (error && typeof error === 'object' && 'status' in error) {
-    const status = (error as { status: number }).status;
-    return status === 429 || status >= 500;
-  }
-  return false;
-}
-```
-
-### Error Notification to User
-When processing completely fails, notify the user:
-```typescript
-// In message handler
-try {
-  const result = await runAgent(text, context, history);
-  // ... handle result
-} catch (error) {
-  logger.error({ error, sender, text }, 'Failed to process message');
-
-  // Try to notify user (don't retry this to avoid loops)
-  try {
-    await sendMessage({
-      message: "Sorry, I couldn't process your message. Please try again later.",
-      recipient: sender,
-    });
-  } catch {
-    // Log but don't fail further
-    logger.error('Failed to send error notification');
-  }
-
-  // Clean up session
-  deleteSession(sender);
-}
-```
-
-### Error Categories
-```typescript
-// src/errors/types.ts
-export class RetryableError extends Error {
-  constructor(message: string, public readonly cause?: Error) {
-    super(message);
-    this.name = 'RetryableError';
-  }
-}
-
-export class PermanentError extends Error {
-  constructor(message: string, public readonly cause?: Error) {
-    super(message);
-    this.name = 'PermanentError';
-  }
-}
-
-export class ToolError extends Error {
-  constructor(
-    message: string,
-    public readonly toolName: string,
-    public readonly cause?: Error
-  ) {
-    super(message);
-    this.name = 'ToolError';
-  }
-}
-```
-
-### Health Logging
-Periodic health log for monitoring:
-```typescript
-// src/health.ts
-import { getAllSessions } from './sessions/store.js';
-import logger from './logger.js';
-
-let healthInterval: NodeJS.Timeout | null = null;
-
-export function startHealthLogger(): void {
-  healthInterval = setInterval(() => {
-    const sessions = getAllSessions();
-    logger.info({
-      event: 'health_check',
-      activeSessions: sessions.length,
-      timestamp: new Date().toISOString(),
-    }, 'Health check');
-  }, 300000); // Every 5 minutes
-}
-
-export function stopHealthLogger(): void {
-  if (healthInterval) {
-    clearInterval(healthInterval);
-    healthInterval = null;
-  }
-}
-```
-
-### Unit Tests: src/utils/retry.test.ts
+### Unit Tests: src/agent/system-prompt.test.ts
 Test cases:
-- Succeeds on first attempt
-- Retries on retryable error
-- Fails immediately on non-retryable error
-- Respects max retry limit
-- Applies exponential backoff
-- Custom shouldRetry function works
+- SYSTEM_PROMPT is a non-empty string
+- Contains key sections (Vault Structure, Tag Taxonomy, Decision Guidelines)
+- Exports default successfully
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, retry tests pass
-3. File `src/utils/retry.ts` exists
-4. Tests exist in `src/utils/retry.test.ts`
-5. Agent runner uses retry wrapper
-6. Failed messages notify user and clean up session
+2. Run `npm test` — exits 0, system-prompt tests pass
+3. File `src/agent/system-prompt.ts` exists
+4. Tests exist in `src/agent/system-prompt.test.ts`
+5. Prompt contains sections for vault structure, tags, and decision guidelines

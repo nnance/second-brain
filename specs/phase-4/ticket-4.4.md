@@ -1,286 +1,220 @@
-# Ticket 4.4: End-to-End Integration Tests
+# Ticket 4.4: Agent Runner with Tool Dispatch
 
 ## Description
-Create comprehensive integration tests that verify the entire system works correctly from message input through vault storage and user notification. These tests use mocked external dependencies (iMessage, Anthropic API) to verify the complete flow.
+Create the agent runner that implements the agentic loop—sending messages to Claude with tools, handling tool_use responses by dispatching to the appropriate tool handlers, and returning results until Claude completes its response. This is the core of the agent architecture.
 
 ## Acceptance Criteria
-- [ ] Integration test suite exists at `src/__tests__/integration/`
-- [ ] Tests cover high-confidence direct storage flow
-- [ ] Tests cover low-confidence clarification flow
-- [ ] Tests cover multi-turn conversation
-- [ ] Tests cover session timeout
-- [ ] Tests cover error scenarios
-- [ ] Tests use mocked Anthropic client
-- [ ] Tests use mocked iMessage client
-- [ ] Tests use temporary test vault
-- [ ] All tests pass in CI
+- [ ] Agent runner module exists at `src/agent/runner.ts`
+- [ ] Implements the agentic loop (send → tool_use → dispatch → tool_result → repeat)
+- [ ] Dispatches to correct tool handler based on tool name
+- [ ] Handles multiple sequential tool calls in one turn
+- [ ] Returns final text response from agent
+- [ ] Provides conversation context (recipient) to tools that need it
+- [ ] Logs each step for debugging
+- [ ] Handles errors gracefully (tool failures don't crash the loop)
+- [ ] Unit tests with mocked Anthropic client
 
 ## Technical Notes
 
-### Test Structure
+### Agent Loop Flow
 ```
-src/__tests__/
-├── integration/
-│   ├── setup.ts              # Test setup and mocks
-│   ├── direct-storage.test.ts
-│   ├── clarification.test.ts
-│   ├── multi-turn.test.ts
-│   ├── timeout.test.ts
-│   └── error-handling.test.ts
+1. Build messages array (system + conversation history + new user message)
+2. Call Claude API with tools
+3. If response contains tool_use:
+   a. Execute tool with params
+   b. Add tool_result to messages
+   c. Call Claude API again
+   d. Repeat until no more tool_use
+4. Return final assistant message
 ```
 
-### Test Setup
+### src/agent/runner.ts
 ```typescript
-// src/__tests__/integration/setup.ts
-import { mkdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { mock } from 'node:test';
+import { anthropic, MODEL } from './client.js';
+import { TOOLS, ToolName } from './tools.js';
+import { SYSTEM_PROMPT } from './system-prompt.js';
+import { vaultWrite } from '../tools/vault-write.js';
+import { vaultRead } from '../tools/vault-read.js';
+import { vaultList } from '../tools/vault-list.js';
+import { logInteraction } from '../tools/log-interaction.js';
+import { sendMessage } from '../tools/send-message.js';
+import logger from '../logger.js';
+import type { MessageParam, ContentBlock, ToolUseBlock } from '@anthropic-ai/sdk/resources/messages';
 
-// Create temporary vault for tests
-export async function createTestVault(): Promise<string> {
-  const vaultPath = join(tmpdir(), `test-vault-${Date.now()}`);
+// Tool dispatch map
+const toolHandlers: Record<ToolName, (params: unknown) => Promise<unknown>> = {
+  vault_write: (params) => vaultWrite(params as Parameters<typeof vaultWrite>[0]),
+  vault_read: (params) => vaultRead(params as Parameters<typeof vaultRead>[0]),
+  vault_list: (params) => vaultList(params as Parameters<typeof vaultList>[0]),
+  log_interaction: (params) => logInteraction(params as Parameters<typeof logInteraction>[0]),
+  send_message: (params) => sendMessage(params as Parameters<typeof sendMessage>[0]),
+};
 
-  await mkdir(join(vaultPath, '_system', 'logs'), { recursive: true });
-  await mkdir(join(vaultPath, 'Tasks'), { recursive: true });
-  await mkdir(join(vaultPath, 'Ideas'), { recursive: true });
-  await mkdir(join(vaultPath, 'Reference'), { recursive: true });
-  await mkdir(join(vaultPath, 'Projects'), { recursive: true });
-  await mkdir(join(vaultPath, 'Inbox'), { recursive: true });
-  await mkdir(join(vaultPath, 'Archive'), { recursive: true });
-
-  return vaultPath;
+export interface AgentContext {
+  recipient: string;  // For send_message tool - the user's phone/iMessage ID
 }
 
-export async function cleanupTestVault(vaultPath: string): Promise<void> {
-  await rm(vaultPath, { recursive: true, force: true });
+export interface AgentResult {
+  success: boolean;
+  toolsCalled: string[];
+  error?: string;
 }
 
-// Mock Anthropic client
-export function createMockAnthropicClient() {
-  return {
-    messages: {
-      create: mock.fn(),
-    },
-  };
-}
+export async function runAgent(
+  userMessage: string,
+  context: AgentContext,
+  conversationHistory: MessageParam[] = []
+): Promise<AgentResult> {
+  const toolsCalled: string[] = [];
 
-// Mock iMessage
-export function createMockIMessage() {
-  return {
-    sendMessage: mock.fn(),
-    startListener: mock.fn(),
-    stopListener: mock.fn(),
-  };
-}
-```
+  try {
+    // Build initial messages
+    const messages: MessageParam[] = [
+      ...conversationHistory,
+      { role: 'user', content: userMessage },
+    ];
 
-### Direct Storage Test
-```typescript
-// src/__tests__/integration/direct-storage.test.ts
-import { describe, it, before, after } from 'node:test';
-import assert from 'node:assert';
-import { createTestVault, cleanupTestVault, createMockAnthropicClient } from './setup.js';
-import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+    logger.info({ messageCount: messages.length }, 'Starting agent run');
 
-describe('Direct Storage Flow', () => {
-  let vaultPath: string;
-  let mockClient: ReturnType<typeof createMockAnthropicClient>;
-
-  before(async () => {
-    vaultPath = await createTestVault();
-    process.env.VAULT_PATH = vaultPath;
-    mockClient = createMockAnthropicClient();
-  });
-
-  after(async () => {
-    await cleanupTestVault(vaultPath);
-  });
-
-  it('stores high-confidence task to Tasks folder', async () => {
-    // Mock Claude responding with tool calls
-    mockClient.messages.create
-      .mockResolvedValueOnce({
-        stop_reason: 'tool_use',
-        content: [{
-          type: 'tool_use',
-          id: 'call_1',
-          name: 'vault_write',
-          input: {
-            folder: 'Tasks',
-            title: 'Follow up with Sarah',
-            content: 'Follow up with Sarah about the security audit',
-            tags: ['person/sarah', 'project/security-audit', 'priority/high'],
-            confidence: 95,
-          },
-        }],
-      })
-      .mockResolvedValueOnce({
-        stop_reason: 'tool_use',
-        content: [{
-          type: 'tool_use',
-          id: 'call_2',
-          name: 'log_interaction',
-          input: { input: 'remind me to follow up with Sarah about the security audit' },
-        }],
-      })
-      .mockResolvedValueOnce({
-        stop_reason: 'tool_use',
-        content: [{
-          type: 'tool_use',
-          id: 'call_3',
-          name: 'send_message',
-          input: { message: 'Got it! Saved as a task.' },
-        }],
-      })
-      .mockResolvedValueOnce({
-        stop_reason: 'end_turn',
-        content: [{ type: 'text', text: 'Done' }],
+    // Agent loop
+    let continueLoop = true;
+    while (continueLoop) {
+      const response = await anthropic.messages.create({
+        model: MODEL,
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        tools: TOOLS,
+        messages,
       });
 
-    // Run the agent
-    const result = await runAgent(
-      'remind me to follow up with Sarah about the security audit',
-      { recipient: '+15551234567' }
-    );
+      logger.debug({
+        stopReason: response.stop_reason,
+        contentBlocks: response.content.length,
+      }, 'Received Claude response');
 
-    // Verify
-    assert.equal(result.success, true);
+      // Process response content
+      const assistantContent: ContentBlock[] = [];
+      const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
 
-    // Check file was created
-    const files = await readdir(join(vaultPath, 'Tasks'));
-    assert.equal(files.length, 1);
-    assert(files[0].includes('follow-up-with-sarah'));
+      for (const block of response.content) {
+        assistantContent.push(block);
 
-    // Check log was created
-    const logs = await readdir(join(vaultPath, '_system', 'logs'));
-    assert.equal(logs.length, 1);
-  });
-});
-```
+        if (block.type === 'tool_use') {
+          const toolResult = await dispatchTool(block, context);
+          toolsCalled.push(block.name);
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: JSON.stringify(toolResult),
+          });
+        }
+      }
 
-### Clarification Flow Test
-```typescript
-// src/__tests__/integration/clarification.test.ts
-describe('Clarification Flow', () => {
-  it('asks clarification for ambiguous input', async () => {
-    // Mock Claude asking for clarification (send_message but no vault_write)
-    mockClient.messages.create
-      .mockResolvedValueOnce({
-        stop_reason: 'tool_use',
-        content: [{
-          type: 'tool_use',
-          id: 'call_1',
-          name: 'log_interaction',
-          input: {
-            input: 'zero trust architecture',
-            clarification: 'Is this a link to save or a concept to research?',
-          },
-        }],
-      })
-      .mockResolvedValueOnce({
-        stop_reason: 'tool_use',
-        content: [{
-          type: 'tool_use',
-          id: 'call_2',
-          name: 'send_message',
-          input: { message: 'Is this a link to save or a concept to research?' },
-        }],
-      })
-      .mockResolvedValueOnce({
-        stop_reason: 'end_turn',
-        content: [{ type: 'text', text: 'Asked clarification' }],
-      });
+      // Add assistant message to conversation
+      messages.push({ role: 'assistant', content: assistantContent });
 
-    const result = await runAgent(
-      'zero trust architecture',
-      { recipient: '+15551234567' }
-    );
+      // If there were tool calls, add results and continue loop
+      if (toolResults.length > 0) {
+        messages.push({ role: 'user', content: toolResults });
+      } else {
+        // No tool calls, we're done
+        continueLoop = false;
+      }
 
-    assert.equal(result.success, true);
-    assert(result.toolsCalled.includes('send_message'));
-    assert(!result.toolsCalled.includes('vault_write'));
-  });
-});
-```
+      // Check stop reason
+      if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
+        continueLoop = false;
+      }
+    }
 
-### Multi-Turn Test
-```typescript
-// src/__tests__/integration/multi-turn.test.ts
-describe('Multi-Turn Conversation', () => {
-  it('completes storage after clarification response', async () => {
-    // First turn: ask clarification
-    // Second turn: receive response and store
+    logger.info({ toolsCalled }, 'Agent run complete');
 
-    // ... mock setup for both turns
+    return {
+      success: true,
+      toolsCalled,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error }, 'Agent run failed');
+    return {
+      success: false,
+      toolsCalled,
+      error: message,
+    };
+  }
+}
 
-    // Verify session is created after first turn
-    // Verify session is cleared after storage
-    // Verify file is in correct folder
-  });
-});
-```
+async function dispatchTool(
+  toolUse: ToolUseBlock,
+  context: AgentContext
+): Promise<unknown> {
+  const { name, input, id } = toolUse;
 
-### Timeout Test
-```typescript
-// src/__tests__/integration/timeout.test.ts
-describe('Session Timeout', () => {
-  it('stores to Inbox on timeout', async () => {
-    // Create session with old lastActivity
-    // Trigger timeout check
-    // Verify file created in Inbox
-    // Verify session deleted
-  });
-});
-```
+  logger.debug({ tool: name, input }, 'Dispatching tool');
 
-### Error Handling Test
-```typescript
-// src/__tests__/integration/error-handling.test.ts
-describe('Error Handling', () => {
-  it('notifies user on API error', async () => {
-    mockClient.messages.create.mockRejectedValue(new Error('API Error'));
+  const handler = toolHandlers[name as ToolName];
+  if (!handler) {
+    logger.error({ tool: name }, 'Unknown tool');
+    return { success: false, error: `Unknown tool: ${name}` };
+  }
 
-    // Verify error notification sent
-    // Verify session cleaned up
-  });
+  try {
+    // Inject recipient for send_message tool
+    let params = input;
+    if (name === 'send_message') {
+      params = { ...(input as object), recipient: context.recipient };
+    }
 
-  it('retries on transient error', async () => {
-    mockClient.messages.create
-      .mockRejectedValueOnce({ status: 429 })  // Rate limit
-      .mockResolvedValueOnce({ /* success */ });
-
-    // Verify retry occurred
-    // Verify eventual success
-  });
-});
-```
-
-### Running Integration Tests
-```bash
-# Run all tests
-npm test
-
-# Run only integration tests
-npm test -- --test-name-pattern="integration"
-```
-
-### CI Configuration
-Add to existing test script or create separate integration test step:
-```json
-{
-  "scripts": {
-    "test": "node --test",
-    "test:integration": "node --test src/__tests__/integration/"
+    const result = await handler(params);
+    logger.debug({ tool: name, result }, 'Tool completed');
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ tool: name, error }, 'Tool failed');
+    return { success: false, error: message };
   }
 }
 ```
 
+### Key Design Decisions
+
+1. **Stateless runner** — Each call is independent; conversation history passed in
+2. **Context injection** — Recipient is injected into send_message params
+3. **Error isolation** — Tool failures return error objects, don't crash the loop
+4. **Full logging** — Every step is logged for debugging
+
+### Unit Tests: src/agent/runner.test.ts
+Test cases:
+- Dispatches to correct tool handler
+- Handles multiple sequential tool calls
+- Injects recipient into send_message
+- Returns error on unknown tool
+- Continues loop on tool_use, stops on end_turn
+- Returns list of tools called
+
+### Mocking Strategy
+Mock the Anthropic client to return predictable tool_use and text responses:
+```typescript
+// Mock a simple tool call followed by end_turn
+const mockResponse1 = {
+  stop_reason: 'tool_use',
+  content: [{
+    type: 'tool_use',
+    id: 'call_1',
+    name: 'vault_write',
+    input: { folder: 'Tasks', title: 'Test', content: 'Test', tags: [], confidence: 90 },
+  }],
+};
+
+const mockResponse2 = {
+  stop_reason: 'end_turn',
+  content: [{ type: 'text', text: 'Done!' }],
+};
+```
+
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, all integration tests pass
-3. Integration tests exist in `src/__tests__/integration/`
-4. Tests cover: direct storage, clarification, multi-turn, timeout, errors
-5. Tests use mocked external dependencies
-6. Tests clean up temporary files
+2. Run `npm test` — exits 0, runner tests pass
+3. File `src/agent/runner.ts` exists
+4. Tests exist in `src/agent/runner.test.ts`
+5. Tool dispatch works for all 5 tools

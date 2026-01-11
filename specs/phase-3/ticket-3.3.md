@@ -1,161 +1,160 @@
-# Ticket 3.3: System Prompt Creation
+# Ticket 3.3: Implement vault_list Tool
 
 ## Description
-Create the system prompt that defines the AI agent's behavior, knowledge, and decision-making framework. This prompt is the core of the agent-first architecture—it contains all the "business logic" that would traditionally be coded. The agent follows these instructions to decide how to categorize, tag, and respond to user input.
+Create the `vault_list` tool that enables the AI agent to discover existing notes in the vault. This allows the agent to find related notes, check for duplicates, or browse content by folder or tags.
 
 ## Acceptance Criteria
-- [ ] System prompt module exists at `src/agent/system-prompt.ts`
-- [ ] Exports `SYSTEM_PROMPT` constant string
-- [ ] Includes role definition and personality
-- [ ] Documents vault structure and folder purposes
-- [ ] Defines complete tag taxonomy
-- [ ] Provides decision-making guidelines
-- [ ] Includes clarification framework
-- [ ] Contains examples of expected behavior
-- [ ] Unit test verifies prompt exports correctly
+- [ ] Tool exists at `src/tools/vault-list.ts`
+- [ ] Lists files in specified folder (or all folders if not specified)
+- [ ] Optionally filters by tags
+- [ ] Returns file metadata: filepath, title, tags, created date
+- [ ] Supports limit parameter for result count
+- [ ] Returns structured result with success status
+- [ ] Never throws—returns error in result object
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### src/agent/system-prompt.ts
+### Tool Interface
 ```typescript
-export const SYSTEM_PROMPT = `You are a personal knowledge capture assistant. Your job is to help the user capture thoughts, tasks, ideas, and references into their Obsidian vault. You make ALL decisions about categorization, tagging, and when to ask for clarification—there is no coded logic to fall back on.
+// src/tools/vault-list.ts
 
-## Your Role
-- Be concise and helpful in responses
-- Proactively capture information without excessive confirmation
-- Ask clarifying questions ONLY when genuinely uncertain
-- Always log interactions for auditability
-- Make confident decisions when the intent is clear
+export interface VaultListParams {
+  folder?: string;      // Folder to list (all content folders if omitted)
+  tags?: string[];      // Filter by tags (AND logic - must have all)
+  limit?: number;       // Max results (default 20)
+}
 
-## Vault Structure
+export interface VaultFileInfo {
+  filepath: string;
+  title: string;
+  tags: string[];
+  created: string;      // ISO date string
+}
 
-The Obsidian vault has these folders:
+export interface VaultListResult {
+  success: boolean;
+  files?: VaultFileInfo[];
+  error?: string;
+}
 
-| Folder | Purpose | Use When |
-|--------|---------|----------|
-| Tasks | Actionable items | Clear action verbs, reminders, follow-ups, to-dos |
-| Ideas | Thoughts to explore | "What if...", concepts, creative sparks, possibilities |
-| Reference | Information to save | Links, articles, facts, quotes, documentation |
-| Projects | Multi-note initiatives | Items clearly tied to ongoing projects |
-| Inbox | Uncertain items | ONLY when genuinely ambiguous after consideration |
-| Archive | Completed items | Items marked as done |
-
-## Tag Taxonomy
-
-Use hierarchical tags in this format:
-
-### Entity Tags
-- \`person/{name}\` — People mentioned (e.g., person/sarah, person/john)
-- \`project/{name}\` — Projects referenced (e.g., project/security-audit)
-- \`topic/{name}\` — Subject areas (e.g., topic/security, topic/ai)
-- \`company/{name}\` — Organizations (e.g., company/acme)
-
-### Priority Tags
-- \`priority/urgent\` — Needs attention now
-- \`priority/high\` — Important, do soon
-- \`priority/normal\` — Default priority
-- \`priority/low\` — Eventually, no pressure
-- \`priority/someday\` — Nice to do, no commitment
-
-### Status Tags
-- \`status/waiting\` — Blocked on someone/something
-- \`status/active\` — Currently in progress
-- \`status/scheduled\` — Has a specific date/time
-- \`status/done\` — Completed
-
-## Decision Guidelines
-
-### High Confidence (Store Directly)
-Store immediately when you see:
-- Clear action verbs: "remind me", "need to", "should", "todo"
-- Explicit category hints: "save this link", "idea:", "note to self"
-- Named entities with clear context
-- Unambiguous intent
-
-Example: "remind me to follow up with Sarah about the security audit"
-→ Tasks folder, tags: person/sarah, project/security-audit, priority/high, status/waiting
-→ Confidence: 90+
-
-### Low Confidence (Ask First)
-Ask clarifying questions when:
-- Multiple valid interpretations exist
-- Category is genuinely ambiguous
-- Key context is missing
-- The input is very brief or vague
-
-Example: "zero trust architecture"
-→ Could be: a link to save, a topic to research, a concept to explore
-→ Ask: "Is this a link to save, a topic to research, or an idea to explore?"
-
-### Clarification Style
-- Be specific about what you're uncertain about
-- Offer options when possible
-- Keep questions concise
-- One question at a time
-
-Good: "Is this a task to complete or just a note to save?"
-Bad: "Can you tell me more about what you mean and whether this is something you want to do or remember or research?"
-
-## Workflow
-
-For each message:
-1. Analyze the input to understand intent
-2. Decide: store directly OR ask clarification
-3. If storing:
-   a. Choose the appropriate folder
-   b. Assign relevant tags (entity, priority, status)
-   c. Set confidence score (0-100)
-   d. Use vault_write to create the note
-   e. Use log_interaction to record the capture
-   f. Use send_message to confirm to user
-4. If clarifying:
-   a. Use log_interaction to record the clarification request
-   b. Use send_message to ask the question
-   c. Wait for user response
-
-## Response Style
-
-When confirming storage:
-- Brief and informative
-- Mention the folder and key tags
-- Example: "Got it! Saved as a task to follow up with Sarah. Tagged with #project/security-audit."
-
-When asking for clarification:
-- Direct and specific
-- Offer clear options
-- Example: "Is this a link to save or a concept to research?"
-
-## Important Rules
-
-1. ALWAYS call log_interaction for every user message
-2. ALWAYS call send_message to respond to the user
-3. Be decisive—use Inbox sparingly
-4. Extract entities (people, projects, topics) and create tags
-5. Default to priority/normal if not specified
-6. Default to status/active for tasks unless "waiting" is implied
-`;
-
-// Export for use in agent runner
-export default SYSTEM_PROMPT;
+export async function vaultList(params: VaultListParams): Promise<VaultListResult> {
+  // Implementation
+}
 ```
 
-### Prompt Design Principles
+### Content Folders
+```typescript
+const CONTENT_FOLDERS = ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'];
+```
 
-1. **Be Specific** — Vague instructions lead to inconsistent behavior
-2. **Provide Examples** — Show, don't just tell
-3. **Explain the "Why"** — Help the agent understand reasoning
-4. **Set Clear Defaults** — Reduce ambiguity in edge cases
-5. **Define Boundaries** — When to ask vs. when to decide
+### Frontmatter Parsing
+Parse YAML frontmatter to extract metadata:
+```typescript
+function parseFrontmatter(content: string): { created?: string; tags?: string[] } {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
 
-### Unit Tests: src/agent/system-prompt.test.ts
+  const yaml = match[1];
+  // Parse created and tags from yaml string
+  // Use regex or lightweight YAML parser
+}
+```
+
+### Implementation Skeleton
+```typescript
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { config } from '../config.js';
+import logger from '../logger.js';
+
+const CONTENT_FOLDERS = ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'];
+
+export async function vaultList(params: VaultListParams): Promise<VaultListResult> {
+  try {
+    const { folder, tags, limit = 20 } = params;
+
+    const foldersToScan = folder ? [folder] : CONTENT_FOLDERS;
+    const allFiles: VaultFileInfo[] = [];
+
+    for (const folderName of foldersToScan) {
+      const folderPath = join(config.vaultPath, folderName);
+      try {
+        const files = await scanFolder(folderPath, folderName);
+        allFiles.push(...files);
+      } catch {
+        // Folder doesn't exist, skip
+      }
+    }
+
+    // Filter by tags if specified
+    let filtered = allFiles;
+    if (tags && tags.length > 0) {
+      filtered = allFiles.filter(file =>
+        tags.every(tag => file.tags.includes(tag))
+      );
+    }
+
+    // Sort by created date (newest first)
+    filtered.sort((a, b) => b.created.localeCompare(a.created));
+
+    // Apply limit
+    const result = filtered.slice(0, limit);
+
+    logger.debug({ folder, tags, resultCount: result.length }, 'vault_list: Listed files');
+
+    return {
+      success: true,
+      files: result,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error, params }, 'vault_list: Failed');
+    return {
+      success: false,
+      error: message,
+    };
+  }
+}
+
+async function scanFolder(folderPath: string, folderName: string): Promise<VaultFileInfo[]> {
+  const entries = await readdir(folderPath);
+  const files: VaultFileInfo[] = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.md')) continue;
+
+    const filepath = join(folderPath, entry);
+    const content = await readFile(filepath, 'utf-8');
+    const metadata = parseFrontmatter(content);
+    const title = extractTitle(content) || entry.replace('.md', '');
+
+    files.push({
+      filepath: `${folderName}/${entry}`,
+      title,
+      tags: metadata.tags || [],
+      created: metadata.created || '',
+    });
+  }
+
+  return files;
+}
+```
+
+### Unit Tests: src/tools/vault-list.test.ts
 Test cases:
-- SYSTEM_PROMPT is a non-empty string
-- Contains key sections (Vault Structure, Tag Taxonomy, Decision Guidelines)
-- Exports default successfully
+- Lists all files when no folder specified
+- Lists files from specific folder
+- Filters by single tag
+- Filters by multiple tags (AND logic)
+- Respects limit parameter
+- Returns empty array for empty folder
+- Handles missing folder gracefully
+- Sorts by created date (newest first)
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, system-prompt tests pass
-3. File `src/agent/system-prompt.ts` exists
-4. Tests exist in `src/agent/system-prompt.test.ts`
-5. Prompt contains sections for vault structure, tags, and decision guidelines
+2. Run `npm test` — exits 0, vault-list tests pass
+3. File `src/tools/vault-list.ts` exists
+4. Tests exist in `src/tools/vault-list.test.ts`
+5. Manual test: create test files, verify listing and filtering works

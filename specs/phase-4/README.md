@@ -1,94 +1,87 @@
-# Phase 4: Conversation Management + Polish
+# Phase 4: Agent Integration
 
 ## Checkpoint
-Multi-turn clarification works: ambiguous text → agent asks question → user responds → agent stores with clarification context. Timeout handling works: pending clarifications expire and get stored to Inbox. System handles errors gracefully.
+Send a text to the dedicated iMessage account → AI agent processes the message using tools → file is stored in the appropriate folder with tags → confirmation reply sent to user. The agent makes all decisions about categorization, tags, and whether to ask for clarification.
 
 ## Tickets
 | Ticket | Description |
 |--------|-------------|
-| 4.1 | Conversation context management |
-| 4.2 | Session timeout handling |
-| 4.3 | Error handling + retries |
-| 4.4 | End-to-end integration tests |
+| 4.1 | Anthropic SDK integration |
+| 4.2 | Tool schema definitions |
+| 4.3 | System prompt creation |
+| 4.4 | Agent runner with tool dispatch |
+| 4.5 | Wire iMessage to agent |
 
 ## Environment Requirements
-- All previous environment variables
-- `SESSION_TIMEOUT_MS` environment variable (optional, default 3600000 = 1 hour)
+- `ANTHROPIC_API_KEY` environment variable
+- `CLAUDE_MODEL` environment variable (optional, defaults to `claude-sonnet-4-20250514`)
+- `VAULT_PATH` environment variable
+- Vault initialized via `npm run vault:init`
 
 ## Architecture
 
-### Conversation State
 ```
+┌─────────────────┐
+│ iMessage        │
+│ Listener        │
+└────────┬────────┘
+         │ message
+         ▼
 ┌─────────────────────────────────────────────────────┐
-│                 Session Store                       │
+│              Agent Runner                           │
 │                                                     │
-│  Map<senderId, Session>                             │
+│  ┌───────────────────────────────────────────────┐  │
+│  │ 1. Build conversation (system prompt + user)  │  │
+│  │ 2. Send to Claude API                         │  │
+│  │ 3. If tool_use response:                      │  │
+│  │    - Dispatch to tool handler                 │  │
+│  │    - Return result to Claude                  │  │
+│  │    - Loop until stop_sequence                 │  │
+│  │ 4. Extract final text response                │  │
+│  └───────────────────────────────────────────────┘  │
 │                                                     │
-│  Session {                                          │
-│    history: MessageParam[]   // Conversation so far │
-│    lastActivity: Date        // For timeout check   │
-│    pendingInput?: string     // Original message    │
-│  }                                                  │
+│  Tool Handlers:                                     │
+│  ├── vault_write  → src/tools/vault-write.ts       │
+│  ├── vault_read   → src/tools/vault-read.ts        │
+│  ├── vault_list   → src/tools/vault-list.ts        │
+│  ├── log_interaction → src/tools/log-interaction.ts│
+│  └── send_message → src/tools/send-message.ts      │
 └─────────────────────────────────────────────────────┘
 ```
 
-### Multi-Turn Flow
+## Key Concepts
+
+### Agent Loop
+The agent runner implements a loop that:
+1. Sends messages to Claude with tools defined
+2. Handles `tool_use` responses by executing the tool
+3. Returns `tool_result` to Claude
+4. Continues until Claude responds with `end_turn`
+
+### No Coded Logic
+All decision-making happens in the system prompt:
+- Which category to use
+- What tags to assign
+- Whether to ask for clarification
+- How to respond to the user
+
+### Tool Dispatch
+A dispatcher maps tool names to handler functions:
+```typescript
+const toolHandlers = {
+  vault_write: vaultWrite,
+  vault_read: vaultRead,
+  vault_list: vaultList,
+  log_interaction: logInteraction,
+  send_message: sendMessage,
+};
 ```
-User: "zero trust architecture"
-    │
-    ▼
-Agent asks: "Is this a link to save or a topic to research?"
-    │ (session stored with history + pending input)
-    │
-User: "link to save"
-    │
-    ▼
-Agent receives clarification with conversation history
-    │
-    ▼
-Agent stores to Reference/ with context
-```
-
-### Timeout Flow
-```
-User: "zero trust architecture"
-    │
-    ▼
-Agent asks clarification question
-    │ (session stored)
-    │
-    ... 1 hour passes ...
-    │
-    ▼
-Timeout check triggers
-    │
-    ▼
-Agent stores to Inbox/ with "timed out" note
-```
-
-## Key Design Decisions
-
-### Agent Still Decides Everything
-The conversation management is infrastructure only:
-- Code stores history and manages timeouts
-- Agent receives history and makes decisions
-- No coded logic about WHEN to clarify
-
-### Session Expiration
-When a session times out:
-1. Inject a synthetic "timeout" message into conversation
-2. Run agent with instruction to store to Inbox
-3. Clean up session
-
-### Concurrent Sessions
-Each sender has their own session. Multiple users can have pending clarifications simultaneously.
 
 ## Done Criteria for Phase
 1. `npm run build` succeeds
 2. `npm test` passes
-3. Multi-turn clarification works end-to-end
-4. New message from same sender continues conversation
-5. New message from different sender starts fresh
-6. Timeout stores to Inbox with appropriate log entry
-7. Agent errors don't crash the system
-8. All integration tests pass
+3. Send a clear task message → stored in Tasks/ with appropriate tags
+4. Send a reference/link message → stored in Reference/
+5. Agent sends confirmation reply via iMessage
+6. Interaction logged to `_system/logs/YYYY-MM-DD.md`
+7. Agent handles clarification naturally (Phase 5 adds timeout handling)

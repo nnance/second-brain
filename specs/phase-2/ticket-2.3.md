@@ -1,124 +1,147 @@
-# Ticket 2.3: Implement vault_write Tool
+# Ticket 2.3: Implement Markdown File Writer
 
 ## Description
-Create the `vault_write` tool that the AI agent uses to create notes in the Obsidian vault. This tool takes structured input and creates a properly formatted markdown file with YAML frontmatter. The tool is a pure function with no business logic—it executes the write operation and returns the result.
+Create a module that writes markdown files to the Obsidian vault with proper YAML frontmatter. Handles filename generation, slug creation, and collision detection (appends suffix if file exists).
 
 ## Acceptance Criteria
-- [ ] Tool exists at `src/tools/vault-write.ts`
-- [ ] Accepts folder, title, content, tags, and confidence parameters
+- [ ] File writer module exists at `src/vault/writer.ts`
 - [ ] Generates filenames in format: `YYYY-MM-DD_title-slug.md`
-- [ ] Creates valid YAML frontmatter with all metadata
-- [ ] Handles filename collisions with numeric suffix
-- [ ] Returns structured result with success status and filepath
-- [ ] Never throws—returns error in result object
-- [ ] Comprehensive unit tests
+- [ ] Creates valid YAML frontmatter
+- [ ] Appends numeric suffix (`-1`, `-2`) if filename exists
+- [ ] Writes to specified folder within vault
+- [ ] Returns the path of the created file
+- [ ] Unit tests cover slug generation and frontmatter formatting
 
 ## Technical Notes
 
-### Tool Interface
-```typescript
-// src/tools/vault-write.ts
+### Filename Format
+`YYYY-MM-DD_title-slug.md`
 
-export type VaultFolder = 'Tasks' | 'Ideas' | 'Reference' | 'Projects' | 'Inbox' | 'Archive';
+Example: `2026-01-10_follow-up-sarah-security-audit.md`
 
-export interface VaultWriteParams {
-  folder: VaultFolder;
-  title: string;
-  content: string;
-  tags: string[];
-  confidence: number;
-}
+### Slug Rules
+- Lowercase
+- Replace spaces with hyphens
+- Remove special characters
+- Truncate to reasonable length (50 chars max)
 
-export interface VaultWriteResult {
-  success: boolean;
-  filepath?: string;
-  filename?: string;
-  error?: string;
-}
-
-export async function vaultWrite(params: VaultWriteParams): Promise<VaultWriteResult> {
-  // Implementation
-}
-```
-
-### Filename Generation
-- Format: `YYYY-MM-DD_title-slug.md`
-- Slug rules: lowercase, spaces → hyphens, remove special chars, max 50 chars
-- Collision handling: append `-1`, `-2`, etc. if file exists
-
-### Frontmatter Format
+### Frontmatter Structure (Phase 2 - Basic)
 ```yaml
 ---
 created: 2026-01-10T14:32:00Z
-tags:
-  - person/sarah
-  - project/security-audit
-confidence: 92
+source: imessage
+confidence: null
+tags: []
 ---
 ```
 
-### Implementation Skeleton
+### src/vault/writer.ts
 ```typescript
 import { writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from '../config.js';
 import logger from '../logger.js';
 
-export async function vaultWrite(params: VaultWriteParams): Promise<VaultWriteResult> {
+export interface NoteMetadata {
+  created: Date;
+  source: string;
+  confidence: number | null;
+  tags: string[];
+}
+
+export interface WriteNoteOptions {
+  folder: string;  // e.g., 'Inbox', 'Tasks'
+  title: string;
+  body: string;
+  metadata: NoteMetadata;
+}
+
+export interface WriteNoteResult {
+  filePath: string;
+  fileName: string;
+}
+
+export async function writeNote(options: WriteNoteOptions): Promise<WriteNoteResult> {
+  const { folder, title, body, metadata } = options;
+
+  const slug = generateSlug(title);
+  const datePrefix = formatDatePrefix(metadata.created);
+  const baseFileName = `${datePrefix}_${slug}.md`;
+
+  const folderPath = join(config.vaultPath, folder);
+  const { fileName, filePath } = await resolveUniqueFileName(folderPath, baseFileName);
+
+  const content = formatNoteContent(title, body, metadata);
+  await writeFile(filePath, content, 'utf-8');
+
+  logger.info({ filePath, folder }, 'Note written');
+
+  return { filePath, fileName };
+}
+
+function generateSlug(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .slice(0, 50);
+}
+
+function formatDatePrefix(date: Date): string {
+  return date.toISOString().split('T')[0];
+}
+
+function formatNoteContent(title: string, body: string, metadata: NoteMetadata): string {
+  const frontmatter = [
+    '---',
+    `created: ${metadata.created.toISOString()}`,
+    `source: ${metadata.source}`,
+    `confidence: ${metadata.confidence}`,
+    `tags: [${metadata.tags.join(', ')}]`,
+    '---',
+    '',
+    `# ${title}`,
+    '',
+    body,
+  ].join('\n');
+
+  return frontmatter;
+}
+
+async function resolveUniqueFileName(folderPath: string, baseFileName: string): Promise<{ fileName: string; filePath: string }> {
+  let fileName = baseFileName;
+  let filePath = join(folderPath, fileName);
+  let suffix = 0;
+
+  while (await fileExists(filePath)) {
+    suffix++;
+    const nameParts = baseFileName.replace('.md', '');
+    fileName = `${nameParts}-${suffix}.md`;
+    filePath = join(folderPath, fileName);
+  }
+
+  return { fileName, filePath };
+}
+
+async function fileExists(path: string): Promise<boolean> {
   try {
-    const { folder, title, content, tags, confidence } = params;
-
-    // Generate slug and filename
-    const slug = generateSlug(title);
-    const datePrefix = new Date().toISOString().split('T')[0];
-    const baseFilename = `${datePrefix}_${slug}.md`;
-
-    // Resolve unique filename
-    const folderPath = join(config.vaultPath, folder);
-    const { filename, filepath } = await resolveUniqueFilename(folderPath, baseFilename);
-
-    // Format content with frontmatter
-    const fileContent = formatNoteContent(title, content, tags, confidence);
-
-    // Write file
-    await writeFile(filepath, fileContent, 'utf-8');
-
-    logger.info({ filepath, folder }, 'vault_write: Note created');
-
-    return {
-      success: true,
-      filepath: `${folder}/${filename}`,
-      filename,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ error, params }, 'vault_write: Failed');
-    return {
-      success: false,
-      error: message,
-    };
+    await access(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 ```
 
-### Helper Functions
-- `generateSlug(title: string): string`
-- `resolveUniqueFilename(folderPath: string, baseFilename: string): Promise<{filename, filepath}>`
-- `formatNoteContent(title: string, content: string, tags: string[], confidence: number): string`
-
-### Unit Tests: src/tools/vault-write.test.ts
+### Unit Tests: src/vault/writer.test.ts
 Test cases:
-- Creates file in correct folder
-- Generates correct filename format
-- Creates valid YAML frontmatter
-- Handles filename collisions
-- Returns success result with filepath
-- Returns error result on failure (e.g., invalid folder)
-- Slug generation handles edge cases (special chars, long titles)
+- `generateSlug` converts titles correctly
+- `formatDatePrefix` produces `YYYY-MM-DD`
+- `formatNoteContent` produces valid frontmatter
+- Filename collision handling appends suffix
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, vault-write tests pass
-3. File `src/tools/vault-write.ts` exists
-4. Tests exist in `src/tools/vault-write.test.ts`
-5. Manual test: call function, verify file created with correct content
+2. Run `npm test` — exits 0, writer tests pass
+3. File `src/vault/writer.ts` exists
+4. Tests exist in `src/vault/writer.test.ts`

@@ -1,78 +1,125 @@
-# Ticket 3.1: Anthropic SDK Integration
+# Ticket 3.1: Refactor Vault Writer to vault_write Tool
 
 ## Description
-Add the Anthropic SDK as a dependency and create a client module for interacting with Claude. Configure authentication and model selection via environment variables. This establishes the foundation for the AI agent.
+Refactor the existing `src/vault/writer.ts` from Phase 2 into an agent-callable tool at `src/tools/vault-write.ts`. The tool accepts structured parameters and returns structured results. It supports writing to any folder (not just Inbox) with full metadata.
 
 ## Acceptance Criteria
-- [ ] Anthropic SDK installed as a dependency
-- [ ] Claude client module exists at `src/agent/client.ts`
-- [ ] API key read from `ANTHROPIC_API_KEY` environment variable
-- [ ] Model configurable via `CLAUDE_MODEL` environment variable
-- [ ] Default model is `claude-sonnet-4-20250514`
-- [ ] Client supports tool-use API format
-- [ ] Application fails fast if API key is missing
-- [ ] `.env.example` updated with new variables
+- [ ] Tool exists at `src/tools/vault-write.ts`
+- [ ] Accepts folder, title, content, tags, and confidence parameters
+- [ ] Reuses slug generation and filename logic from Phase 2
+- [ ] Supports all vault folders (Tasks, Ideas, Reference, Projects, Inbox, Archive)
+- [ ] Returns structured result with success status and filepath
+- [ ] Never throws—returns error in result object
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### Dependencies
-```bash
-npm install @anthropic-ai/sdk
+### Tool Interface
+```typescript
+// src/tools/vault-write.ts
+
+export type VaultFolder = 'Tasks' | 'Ideas' | 'Reference' | 'Projects' | 'Inbox' | 'Archive';
+
+export interface VaultWriteParams {
+  folder: VaultFolder;
+  title: string;
+  content: string;
+  tags: string[];
+  confidence: number;
+}
+
+export interface VaultWriteResult {
+  success: boolean;
+  filepath?: string;
+  filename?: string;
+  error?: string;
+}
+
+export async function vaultWrite(params: VaultWriteParams): Promise<VaultWriteResult> {
+  // Implementation
+}
 ```
 
-### Environment Variables
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
-| `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | Claude model to use |
+### Reusing Phase 2 Logic
+The existing `src/vault/writer.ts` has:
+- `generateSlug()` — Convert title to filename-safe slug
+- `resolveUniqueFileName()` — Handle filename collisions
+- `formatNoteContent()` — Create markdown with frontmatter
 
-### src/config.ts Update
-Add to config:
-```typescript
-anthropicApiKey: string;
-claudeModel: string;
+These can be extracted or reimplemented in the tool.
+
+### Key Differences from Phase 2
+| Phase 2 | Phase 3 Tool |
+|---------|--------------|
+| Always writes to Inbox | Writes to specified folder |
+| Uses `source: imessage` | Doesn't set source |
+| `confidence: null` | Confidence from agent |
+| `tags: []` empty | Tags from agent |
+| Throws on error | Returns error result |
+
+### Frontmatter Format
+```yaml
+---
+created: 2026-01-10T14:32:00Z
+tags:
+  - person/sarah
+  - project/security-audit
+confidence: 92
+---
 ```
 
-Validate `ANTHROPIC_API_KEY` is present.
-
-### src/agent/client.ts
+### Implementation Skeleton
 ```typescript
-import Anthropic from '@anthropic-ai/sdk';
+import { writeFile, access } from 'node:fs/promises';
+import { join } from 'node:path';
 import { config } from '../config.js';
 import logger from '../logger.js';
 
-// Export the client for use in agent runner
-export const anthropic = new Anthropic({
-  apiKey: config.anthropicApiKey,
-});
+export async function vaultWrite(params: VaultWriteParams): Promise<VaultWriteResult> {
+  try {
+    const { folder, title, content, tags, confidence } = params;
 
-export const MODEL = config.claudeModel;
+    const slug = generateSlug(title);
+    const datePrefix = new Date().toISOString().split('T')[0];
+    const baseFilename = `${datePrefix}_${slug}.md`;
 
-// Type exports for tool definitions
-export type { Tool, ToolUseBlock, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
-export type { MessageParam, ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+    const folderPath = join(config.vaultPath, folder);
+    const { filename, filepath } = await resolveUniqueFilename(folderPath, baseFilename);
 
-logger.info({ model: MODEL }, 'Anthropic client initialized');
+    const fileContent = formatNoteContent(title, content, tags, confidence);
+    await writeFile(filepath, fileContent, 'utf-8');
+
+    logger.info({ filepath, folder }, 'vault_write: Note created');
+
+    return {
+      success: true,
+      filepath: `${folder}/${filename}`,
+      filename,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error, params }, 'vault_write: Failed');
+    return {
+      success: false,
+      error: message,
+    };
+  }
+}
 ```
 
-### .env.example Update
-```bash
-# Required: Anthropic API key
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional: Claude model (default: claude-sonnet-4-20250514)
-CLAUDE_MODEL=claude-sonnet-4-20250514
-```
-
-### Unit Tests: src/agent/client.test.ts
+### Unit Tests: src/tools/vault-write.test.ts
 Test cases:
-- Client module exports `anthropic` and `MODEL`
-- Config validation catches missing API key
-- Model defaults to expected value
+- Creates file in correct folder
+- Generates correct filename format
+- Creates valid YAML frontmatter with tags
+- Handles filename collisions
+- Returns success result with filepath
+- Returns error result on failure
+- Slug generation handles edge cases
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0
-3. Run `npm start` without `ANTHROPIC_API_KEY` — exits with error containing "ANTHROPIC_API_KEY"
-4. File `src/agent/client.ts` exists
-5. `.env.example` includes `ANTHROPIC_API_KEY` and `CLAUDE_MODEL`
+2. Run `npm test` — exits 0, vault-write tests pass
+3. File `src/tools/vault-write.ts` exists
+4. Tests exist in `src/tools/vault-write.test.ts`
+5. Manual test: call function, verify file created with correct content

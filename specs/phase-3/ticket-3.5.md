@@ -1,135 +1,135 @@
-# Ticket 3.5: Wire iMessage to Agent
+# Ticket 3.5: Implement send_message Tool
 
 ## Description
-Connect the iMessage listener from Phase 1 to the agent runner. When a message arrives, pass it to the agent for processing. This completes the basic end-to-end flow: message → agent → vault storage → reply.
+Create the `send_message` tool that enables the AI agent to reply to users via iMessage. This allows the agent to send confirmations, ask clarifying questions, and provide feedback.
 
 ## Acceptance Criteria
-- [ ] Main entry point wires iMessage listener to agent runner
-- [ ] Each message spawns an agent run with the message text
-- [ ] Agent context includes sender as recipient
-- [ ] Errors in agent don't crash the listener
-- [ ] Logging shows end-to-end flow
-- [ ] Graceful shutdown works correctly
+- [ ] Tool exists at `src/tools/send-message.ts`
+- [ ] Accepts message text and recipient parameters
+- [ ] Sends message via imessage-kit
+- [ ] Returns structured result with success status
+- [ ] Handles send failures gracefully
+- [ ] Never throws—returns error in result object
+- [ ] Unit tests with mocked imessage-kit
 
 ## Technical Notes
 
-### Updated src/index.ts
+### Tool Interface
 ```typescript
-import logger from './logger.js';
-import { config } from './config.js';
-import { startListener, stopListener } from './messages/listener.js';
-import { runAgent } from './agent/runner.js';
+// src/tools/send-message.ts
 
-logger.info({
-  vaultPath: config.vaultPath,
-  model: config.claudeModel,
-}, 'second-brain starting...');
+export interface SendMessageParams {
+  message: string;              // Message to send
+  recipient: string;            // Phone number or iMessage ID
+}
 
-startListener({
-  onMessage: async (message) => {
-    const { text, sender } = message;
+export interface SendMessageResult {
+  success: boolean;
+  error?: string;
+}
 
-    logger.info({
-      event: 'message_received',
-      sender,
-      textLength: text.length,
-    }, 'Processing incoming message');
+export async function sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
+  // Implementation
+}
+```
 
-    try {
-      const result = await runAgent(text, { recipient: sender });
+### Implementation
+```typescript
+import { sendMessage as imessageSend } from 'imessage-kit';
+import logger from '../logger.js';
 
-      if (result.success) {
-        logger.info({
-          event: 'agent_complete',
-          sender,
-          toolsCalled: result.toolsCalled,
-        }, 'Agent completed successfully');
-      } else {
-        logger.error({
-          event: 'agent_failed',
-          sender,
-          error: result.error,
-          toolsCalled: result.toolsCalled,
-        }, 'Agent failed');
-      }
-    } catch (error) {
-      logger.error({
-        event: 'agent_error',
-        sender,
-        error,
-      }, 'Unexpected error in agent');
-    }
+export async function sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
+  try {
+    const { message, recipient } = params;
+
+    await imessageSend({
+      to: recipient,
+      text: message,
+    });
+
+    logger.info({ recipient }, 'send_message: Message sent');
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error, params }, 'send_message: Failed');
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
+}
+```
+
+### Message Context
+The recipient is extracted from the original incoming message. When the agent runner (Phase 4) invokes this tool, it provides the recipient from the conversation context.
+
+### Rate Limiting Consideration
+While not required for MVP, consider future rate limiting to prevent spam:
+- Track messages sent per recipient
+- Implement cooldown periods if needed
+
+### Unit Tests: src/tools/send-message.test.ts
+Test cases:
+- Sends message successfully (mocked imessage-kit)
+- Returns success result
+- Returns error result on failure
+- Handles network errors gracefully
+
+### Mocking imessage-kit
+```typescript
+import { describe, it, mock, beforeEach } from 'node:test';
+import assert from 'node:assert';
+
+// Mock the imessage-kit module before importing the tool
+const mockSendMessage = mock.fn();
+mock.module('imessage-kit', {
+  namedExports: {
+    sendMessage: mockSendMessage,
   },
 });
 
-// Graceful shutdown
-const shutdown = () => {
-  logger.info('Shutting down...');
-  stopListener();
-  process.exit(0);
-};
+// Now import the tool (uses mocked module)
+const { sendMessage } = await import('./send-message.js');
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+describe('sendMessage', () => {
+  beforeEach(() => {
+    mockSendMessage.mock.resetCalls();
+  });
 
-logger.info('Listening for messages...');
+  it('sends message successfully', async () => {
+    mockSendMessage.mock.mockImplementation(() => Promise.resolve());
+
+    const result = await sendMessage({
+      message: 'Got it! Saved as a task.',
+      recipient: '+1234567890',
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(mockSendMessage.mock.callCount(), 1);
+  });
+
+  it('returns error on failure', async () => {
+    mockSendMessage.mock.mockImplementation(() =>
+      Promise.reject(new Error('Network error'))
+    );
+
+    const result = await sendMessage({
+      message: 'Test message',
+      recipient: '+1234567890',
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'Network error');
+  });
+});
 ```
-
-### Message Flow
-```
-iMessage received
-    │
-    ├── Log: message_received
-    │
-    ▼
-runAgent(text, { recipient: sender })
-    │
-    ├── Agent analyzes message
-    ├── Agent calls tools (vault_write, log_interaction, send_message)
-    ├── Agent returns result
-    │
-    ▼
-Log: agent_complete or agent_failed
-```
-
-### Error Handling
-- Wrap agent call in try/catch
-- Log errors but don't crash
-- Listener continues running after individual failures
-- Agent errors are isolated per message
-
-### Important Notes
-
-1. **No conversation state yet** — Each message is processed independently in Phase 3. Phase 4 adds conversation context for multi-turn clarifications.
-
-2. **Synchronous processing** — Messages are processed one at a time. For high volume, consider queuing (future enhancement).
-
-3. **Agent makes all decisions** — The code here just passes the message through. All categorization, tagging, and response logic is in the agent.
-
-### Integration Test
-Manual testing procedure:
-1. Set environment variables (VAULT_PATH, ANTHROPIC_API_KEY)
-2. Initialize vault: `npm run vault:init`
-3. Start the app: `npm start`
-4. Send a text: "remind me to call mom tomorrow"
-5. Verify:
-   - File created in `Tasks/` folder
-   - Tags include appropriate metadata
-   - Interaction logged in `_system/logs/`
-   - Reply received via iMessage
-
-### Unit Tests
-The wiring code is thin and primarily integration. Consider:
-- Verifying the message handler calls runAgent with correct params
-- Verifying error handling doesn't propagate exceptions
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0
-3. src/index.ts imports and uses runAgent
-4. With env vars set and vault initialized:
-   - Run `npm start`
-   - Send a text to the dedicated iMessage account
-   - Verify file appears in vault with correct frontmatter
-   - Verify interaction log entry exists
-   - Verify reply received (if send_message tool works)
+2. Run `npm test` — exits 0, send-message tests pass
+3. File `src/tools/send-message.ts` exists
+4. Tests exist in `src/tools/send-message.test.ts`
+5. Manual test: (optional) send test message via the tool

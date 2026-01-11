@@ -1,220 +1,164 @@
-# Ticket 3.4: Agent Runner with Tool Dispatch
+# Ticket 3.4: Refactor Interaction Log to log_interaction Tool
 
 ## Description
-Create the agent runner that implements the agentic loop—sending messages to Claude with tools, handling tool_use responses by dispatching to the appropriate tool handlers, and returning results until Claude completes its response. This is the core of the agent architecture.
+Refactor the existing `src/vault/interaction-log.ts` from Phase 2 into an agent-callable tool at `src/tools/log-interaction.ts`. The tool accepts structured parameters with full categorization details and returns structured results.
 
 ## Acceptance Criteria
-- [ ] Agent runner module exists at `src/agent/runner.ts`
-- [ ] Implements the agentic loop (send → tool_use → dispatch → tool_result → repeat)
-- [ ] Dispatches to correct tool handler based on tool name
-- [ ] Handles multiple sequential tool calls in one turn
-- [ ] Returns final text response from agent
-- [ ] Provides conversation context (recipient) to tools that need it
-- [ ] Logs each step for debugging
-- [ ] Handles errors gracefully (tool failures don't crash the loop)
-- [ ] Unit tests with mocked Anthropic client
+- [ ] Tool exists at `src/tools/log-interaction.ts`
+- [ ] Accepts full interaction details: input, category, confidence, reasoning, tags, stored path, clarification info
+- [ ] Writes to `_system/logs/YYYY-MM-DD.md` based on current date
+- [ ] Creates file with header if it doesn't exist
+- [ ] Appends log entries to existing file
+- [ ] Returns structured result with success status and log path
+- [ ] Never throws—returns error in result object
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### Agent Loop Flow
-```
-1. Build messages array (system + conversation history + new user message)
-2. Call Claude API with tools
-3. If response contains tool_use:
-   a. Execute tool with params
-   b. Add tool_result to messages
-   c. Call Claude API again
-   d. Repeat until no more tool_use
-4. Return final assistant message
-```
-
-### src/agent/runner.ts
+### Tool Interface
 ```typescript
-import { anthropic, MODEL } from './client.js';
-import { TOOLS, ToolName } from './tools.js';
-import { SYSTEM_PROMPT } from './system-prompt.js';
-import { vaultWrite } from '../tools/vault-write.js';
-import { vaultRead } from '../tools/vault-read.js';
-import { vaultList } from '../tools/vault-list.js';
-import { logInteraction } from '../tools/log-interaction.js';
-import { sendMessage } from '../tools/send-message.js';
-import logger from '../logger.js';
-import type { MessageParam, ContentBlock, ToolUseBlock } from '@anthropic-ai/sdk/resources/messages';
+// src/tools/log-interaction.ts
 
-// Tool dispatch map
-const toolHandlers: Record<ToolName, (params: unknown) => Promise<unknown>> = {
-  vault_write: (params) => vaultWrite(params as Parameters<typeof vaultWrite>[0]),
-  vault_read: (params) => vaultRead(params as Parameters<typeof vaultRead>[0]),
-  vault_list: (params) => vaultList(params as Parameters<typeof vaultList>[0]),
-  log_interaction: (params) => logInteraction(params as Parameters<typeof logInteraction>[0]),
-  send_message: (params) => sendMessage(params as Parameters<typeof sendMessage>[0]),
-};
-
-export interface AgentContext {
-  recipient: string;  // For send_message tool - the user's phone/iMessage ID
+export interface LogInteractionParams {
+  input: string;                // User's original message
+  category?: string;            // Assigned category (Tasks, Ideas, etc.)
+  confidence?: number;          // Confidence score (0-100)
+  reasoning?: string;           // Why this categorization was chosen
+  tags?: string[];              // Assigned tags
+  stored_path?: string;         // Where the note was stored
+  clarification?: string;       // Clarification question asked (if any)
+  user_response?: string;       // User's response to clarification (if any)
 }
 
-export interface AgentResult {
+export interface LogInteractionResult {
   success: boolean;
-  toolsCalled: string[];
+  log_path?: string;            // Path to log file
   error?: string;
 }
 
-export async function runAgent(
-  userMessage: string,
-  context: AgentContext,
-  conversationHistory: MessageParam[] = []
-): Promise<AgentResult> {
-  const toolsCalled: string[] = [];
+export async function logInteraction(params: LogInteractionParams): Promise<LogInteractionResult> {
+  // Implementation
+}
+```
 
+### Key Differences from Phase 2
+| Phase 2 | Phase 3 Tool |
+|---------|--------------|
+| Only input and storedPath | Full categorization metadata |
+| Simple format | Rich format with reasoning |
+| Throws on error | Returns error result |
+
+### Log Entry Format (Enhanced)
+```markdown
+---
+
+## 14:32:00
+
+**Input:** "remind me to follow up with Sarah about the security audit"
+
+**Categorization:**
+- Category: Tasks
+- Confidence: 92%
+- Reasoning: Clear action verb, named person, specific topic
+
+**Tags assigned:**
+- person/sarah
+- project/security-audit
+- priority/high
+- status/waiting
+
+**Stored:** `Tasks/2026-01-10_follow-up-sarah-security-audit.md`
+
+---
+```
+
+### Log Entry Format (with clarification)
+```markdown
+---
+
+## 14:45:12
+
+**Input:** "interesting article about zero-trust architecture"
+
+**Clarification requested:** "Is this a link to save or a concept to research?"
+
+**User response:** "link to save"
+
+**Categorization:**
+- Category: Reference
+- Confidence: 95%
+- Reasoning: User clarified this is a link to save
+
+**Tags assigned:**
+- topic/security
+- topic/zero-trust
+
+**Stored:** `Reference/2026-01-10_zero-trust-architecture-article.md`
+
+---
+```
+
+### Reusing Phase 2 Logic
+The existing `src/vault/interaction-log.ts` has:
+- `formatLogFileName()` — Generate date-based filename
+- `formatLogHeader()` — Create daily log header
+- File existence checking and append logic
+
+These can be adapted for the enhanced format.
+
+### Implementation Skeleton
+```typescript
+import { appendFile, writeFile, access } from 'node:fs/promises';
+import { join } from 'node:path';
+import { config } from '../config.js';
+import logger from '../logger.js';
+
+export async function logInteraction(params: LogInteractionParams): Promise<LogInteractionResult> {
   try {
-    // Build initial messages
-    const messages: MessageParam[] = [
-      ...conversationHistory,
-      { role: 'user', content: userMessage },
-    ];
+    const now = new Date();
+    const logFileName = `${now.toISOString().split('T')[0]}.md`;
+    const logFilePath = join(config.vaultPath, '_system', 'logs', logFileName);
 
-    logger.info({ messageCount: messages.length }, 'Starting agent run');
+    const entryContent = formatLogEntry(params, now);
 
-    // Agent loop
-    let continueLoop = true;
-    while (continueLoop) {
-      const response = await anthropic.messages.create({
-        model: MODEL,
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        tools: TOOLS,
-        messages,
-      });
-
-      logger.debug({
-        stopReason: response.stop_reason,
-        contentBlocks: response.content.length,
-      }, 'Received Claude response');
-
-      // Process response content
-      const assistantContent: ContentBlock[] = [];
-      const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
-
-      for (const block of response.content) {
-        assistantContent.push(block);
-
-        if (block.type === 'tool_use') {
-          const toolResult = await dispatchTool(block, context);
-          toolsCalled.push(block.name);
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify(toolResult),
-          });
-        }
-      }
-
-      // Add assistant message to conversation
-      messages.push({ role: 'assistant', content: assistantContent });
-
-      // If there were tool calls, add results and continue loop
-      if (toolResults.length > 0) {
-        messages.push({ role: 'user', content: toolResults });
-      } else {
-        // No tool calls, we're done
-        continueLoop = false;
-      }
-
-      // Check stop reason
-      if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
-        continueLoop = false;
-      }
+    if (await fileExists(logFilePath)) {
+      await appendFile(logFilePath, entryContent, 'utf-8');
+    } else {
+      const header = formatLogHeader(now);
+      await writeFile(logFilePath, header + entryContent, 'utf-8');
     }
 
-    logger.info({ toolsCalled }, 'Agent run complete');
+    const relativePath = `_system/logs/${logFileName}`;
+    logger.debug({ logFilePath }, 'log_interaction: Entry written');
 
     return {
       success: true,
-      toolsCalled,
+      log_path: relativePath,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ error }, 'Agent run failed');
+    logger.error({ error, params }, 'log_interaction: Failed');
     return {
       success: false,
-      toolsCalled,
       error: message,
     };
   }
 }
-
-async function dispatchTool(
-  toolUse: ToolUseBlock,
-  context: AgentContext
-): Promise<unknown> {
-  const { name, input, id } = toolUse;
-
-  logger.debug({ tool: name, input }, 'Dispatching tool');
-
-  const handler = toolHandlers[name as ToolName];
-  if (!handler) {
-    logger.error({ tool: name }, 'Unknown tool');
-    return { success: false, error: `Unknown tool: ${name}` };
-  }
-
-  try {
-    // Inject recipient for send_message tool
-    let params = input;
-    if (name === 'send_message') {
-      params = { ...(input as object), recipient: context.recipient };
-    }
-
-    const result = await handler(params);
-    logger.debug({ tool: name, result }, 'Tool completed');
-    return result;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ tool: name, error }, 'Tool failed');
-    return { success: false, error: message };
-  }
-}
 ```
 
-### Key Design Decisions
-
-1. **Stateless runner** — Each call is independent; conversation history passed in
-2. **Context injection** — Recipient is injected into send_message params
-3. **Error isolation** — Tool failures return error objects, don't crash the loop
-4. **Full logging** — Every step is logged for debugging
-
-### Unit Tests: src/agent/runner.test.ts
+### Unit Tests: src/tools/log-interaction.test.ts
 Test cases:
-- Dispatches to correct tool handler
-- Handles multiple sequential tool calls
-- Injects recipient into send_message
-- Returns error on unknown tool
-- Continues loop on tool_use, stops on end_turn
-- Returns list of tools called
-
-### Mocking Strategy
-Mock the Anthropic client to return predictable tool_use and text responses:
-```typescript
-// Mock a simple tool call followed by end_turn
-const mockResponse1 = {
-  stop_reason: 'tool_use',
-  content: [{
-    type: 'tool_use',
-    id: 'call_1',
-    name: 'vault_write',
-    input: { folder: 'Tasks', title: 'Test', content: 'Test', tags: [], confidence: 90 },
-  }],
-};
-
-const mockResponse2 = {
-  stop_reason: 'end_turn',
-  content: [{ type: 'text', text: 'Done!' }],
-};
-```
+- Creates new log file with header
+- Appends to existing log file
+- Formats entry with all fields
+- Formats entry with minimal fields (input only)
+- Formats entry with clarification
+- Generates correct filename from date
+- Returns success with log path
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, runner tests pass
-3. File `src/agent/runner.ts` exists
-4. Tests exist in `src/agent/runner.test.ts`
-5. Tool dispatch works for all 5 tools
+2. Run `npm test` — exits 0, log-interaction tests pass
+3. File `src/tools/log-interaction.ts` exists
+4. Tests exist in `src/tools/log-interaction.test.ts`
+5. Manual test: call function, verify log file created with correct format

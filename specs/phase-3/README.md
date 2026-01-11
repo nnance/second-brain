@@ -1,87 +1,70 @@
-# Phase 3: Agent Integration
+# Phase 3: Refactor to Agent Tools
 
 ## Checkpoint
-Send a text to the dedicated iMessage account → AI agent processes the message using tools → file is stored in the appropriate folder with tags → confirmation reply sent to user. The agent makes all decisions about categorization, tags, and whether to ask for clarification.
+Existing Phase 2 code refactored into agent-callable tools. Each tool is a pure function that can be invoked by the AI agent. Tools have no business logic—they execute actions and return structured results.
 
 ## Tickets
 | Ticket | Description |
 |--------|-------------|
-| 3.1 | Anthropic SDK integration |
-| 3.2 | Tool schema definitions |
-| 3.3 | System prompt creation |
-| 3.4 | Agent runner with tool dispatch |
-| 3.5 | Wire iMessage to agent |
+| 3.1 | Refactor vault writer to vault_write tool |
+| 3.2 | Implement vault_read tool |
+| 3.3 | Implement vault_list tool |
+| 3.4 | Refactor interaction log to log_interaction tool |
+| 3.5 | Implement send_message tool |
 
-## Environment Requirements
-- `ANTHROPIC_API_KEY` environment variable
-- `CLAUDE_MODEL` environment variable (optional, defaults to `claude-sonnet-4-20250514`)
-- `VAULT_PATH` environment variable
-- Vault initialized via `npm run vault:init`
+## Background
 
-## Architecture
+Phase 2 implemented direct file writing that stores all messages to Inbox:
+- `src/vault/writer.ts` — Writes markdown files with frontmatter
+- `src/vault/interaction-log.ts` — Appends to daily log files
+
+This phase refactors these modules into **agent tools** that:
+1. Accept structured parameters from the agent
+2. Return structured results (success/error)
+3. Can be called for any folder, not just Inbox
+4. Support the full tag and confidence metadata
+
+## Tool Design Principles
+
+1. **Pure functions** — Tools take input, perform action, return result
+2. **No business logic** — Tools don't decide *what* to do, only *how* to do it
+3. **Typed interfaces** — Clear input/output types for agent schema generation
+4. **Never throw** — Return error in result object instead
+5. **Comprehensive tests** — Each tool has unit tests for all scenarios
+
+## Directory Structure Change
 
 ```
-┌─────────────────┐
-│ iMessage        │
-│ Listener        │
-└────────┬────────┘
-         │ message
-         ▼
-┌─────────────────────────────────────────────────────┐
-│              Agent Runner                           │
-│                                                     │
-│  ┌───────────────────────────────────────────────┐  │
-│  │ 1. Build conversation (system prompt + user)  │  │
-│  │ 2. Send to Claude API                         │  │
-│  │ 3. If tool_use response:                      │  │
-│  │    - Dispatch to tool handler                 │  │
-│  │    - Return result to Claude                  │  │
-│  │    - Loop until stop_sequence                 │  │
-│  │ 4. Extract final text response                │  │
-│  └───────────────────────────────────────────────┘  │
-│                                                     │
-│  Tool Handlers:                                     │
-│  ├── vault_write  → src/tools/vault-write.ts       │
-│  ├── vault_read   → src/tools/vault-read.ts        │
-│  ├── vault_list   → src/tools/vault-list.ts        │
-│  ├── log_interaction → src/tools/log-interaction.ts│
-│  └── send_message → src/tools/send-message.ts      │
-└─────────────────────────────────────────────────────┘
+# Before (Phase 2)
+src/
+├── vault/
+│   ├── writer.ts           # Direct file writer
+│   └── interaction-log.ts  # Log appender
+
+# After (Phase 3)
+src/
+├── vault/
+│   ├── writer.ts           # Keep for backwards compatibility
+│   └── interaction-log.ts  # Keep for backwards compatibility
+├── tools/
+│   ├── vault-write.ts      # Agent tool: create notes
+│   ├── vault-read.ts       # Agent tool: read notes
+│   ├── vault-list.ts       # Agent tool: list/search notes
+│   ├── log-interaction.ts  # Agent tool: audit logging
+│   └── send-message.ts     # Agent tool: reply to user
 ```
 
-## Key Concepts
+## Migration Strategy
 
-### Agent Loop
-The agent runner implements a loop that:
-1. Sends messages to Claude with tools defined
-2. Handles `tool_use` responses by executing the tool
-3. Returns `tool_result` to Claude
-4. Continues until Claude responds with `end_turn`
-
-### No Coded Logic
-All decision-making happens in the system prompt:
-- Which category to use
-- What tags to assign
-- Whether to ask for clarification
-- How to respond to the user
-
-### Tool Dispatch
-A dispatcher maps tool names to handler functions:
-```typescript
-const toolHandlers = {
-  vault_write: vaultWrite,
-  vault_read: vaultRead,
-  vault_list: vaultList,
-  log_interaction: logInteraction,
-  send_message: sendMessage,
-};
-```
+1. Create new `src/tools/` directory
+2. Implement each tool as a new module (can reuse logic from Phase 2)
+3. Keep Phase 2 code in place for now (wiring changes in Phase 4)
+4. Tools work independently and can be tested in isolation
 
 ## Done Criteria for Phase
 1. `npm run build` succeeds
 2. `npm test` passes
-3. Send a clear task message → stored in Tasks/ with appropriate tags
-4. Send a reference/link message → stored in Reference/
-5. Agent sends confirmation reply via iMessage
-6. Interaction logged to `_system/logs/YYYY-MM-DD.md`
-7. Agent handles clarification naturally (Phase 4 adds timeout handling)
+3. All five tools implemented in `src/tools/`
+4. Each tool has corresponding `.test.ts` file
+5. Tools can be imported and called programmatically
+6. Tools return structured results (not throw exceptions)

@@ -1,148 +1,207 @@
-# Ticket 4.2: Session Timeout Handling
+# Ticket 4.2: Tool Schema Definitions
 
 ## Description
-Implement a timeout mechanism for sessions with pending clarifications. When a user doesn't respond to a clarification question within the timeout period, the system should automatically store the original message to Inbox and notify the user.
+Define the tool schemas in the Anthropic API format. These schemas describe each tool's name, description, and parameters so Claude can understand when and how to use them. The schemas are passed to the Claude API on each request.
 
 ## Acceptance Criteria
-- [ ] Timeout configurable via `SESSION_TIMEOUT_MS` environment variable
-- [ ] Default timeout is 3600000ms (1 hour)
-- [ ] Timeout checker runs periodically (every 60 seconds)
-- [ ] Expired sessions trigger agent run with timeout context
-- [ ] Agent stores to Inbox when timed out
-- [ ] User receives timeout notification
-- [ ] Expired session is cleaned up
-- [ ] Logging captures timeout events
-- [ ] Unit tests verify timeout logic
+- [ ] Tool definitions module exists at `src/agent/tools.ts`
+- [ ] All five tools defined with JSON Schema parameters
+- [ ] Descriptions are clear and help Claude understand when to use each tool
+- [ ] Parameter schemas match the tool implementations from Phase 2
+- [ ] Exports array of tools for use in API calls
+- [ ] Unit tests verify schema structure
 
 ## Technical Notes
 
-### Environment Variable
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `SESSION_TIMEOUT_MS` | No | `3600000` | Session timeout in milliseconds (1 hour) |
-
-### src/config.ts Update
+### Tool Schema Format
+Each tool follows the Anthropic tool format:
 ```typescript
-sessionTimeoutMs: number;
-
-// In loadConfig():
-sessionTimeoutMs: Number(process.env.SESSION_TIMEOUT_MS) || 3600000,
+interface Tool {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+}
 ```
 
-### Timeout Checker Module
+### src/agent/tools.ts
 ```typescript
-// src/sessions/timeout.ts
-import { getAllSessions, deleteSession, getSession } from './store.js';
-import { runAgent } from '../agent/runner.js';
-import { config } from '../config.js';
-import logger from '../logger.js';
+import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 
-let timeoutInterval: NodeJS.Timeout | null = null;
+export const TOOLS: Tool[] = [
+  {
+    name: 'vault_write',
+    description: `Create a new note in the Obsidian vault. Use this to store captured thoughts, tasks, ideas, or references.
 
-export function startTimeoutChecker(): void {
-  if (timeoutInterval) return;
+Choose the appropriate folder:
+- Tasks: Actionable items, reminders, follow-ups
+- Ideas: Thoughts to explore, creative sparks, concepts
+- Reference: Links, articles, facts to save
+- Projects: Items related to multi-step initiatives
+- Inbox: Only if genuinely uncertain about categorization
+- Archive: Completed or inactive items
 
-  logger.info({ timeoutMs: config.sessionTimeoutMs }, 'Starting session timeout checker');
+Always assign relevant tags and a confidence score reflecting how certain you are about the categorization.`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        folder: {
+          type: 'string',
+          enum: ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'],
+          description: 'The folder to store the note in',
+        },
+        title: {
+          type: 'string',
+          description: 'A concise, descriptive title for the note',
+        },
+        content: {
+          type: 'string',
+          description: 'The markdown content of the note (without frontmatter)',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tags without # prefix. Use hierarchical format: person/sarah, project/security-audit, topic/security, priority/high, status/waiting',
+        },
+        confidence: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+          description: 'Confidence score (0-100) for the categorization',
+        },
+      },
+      required: ['folder', 'title', 'content', 'tags', 'confidence'],
+    },
+  },
+  {
+    name: 'vault_read',
+    description: 'Read an existing note from the vault. Use this to check related notes, verify stored content, or get context about previous captures.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        filepath: {
+          type: 'string',
+          description: 'Path relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"',
+        },
+      },
+      required: ['filepath'],
+    },
+  },
+  {
+    name: 'vault_list',
+    description: 'List notes in the vault. Use this to find related notes, check for potential duplicates, or browse existing content before creating new notes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        folder: {
+          type: 'string',
+          description: 'Folder to list (omit for all content folders)',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter by tags (all must match)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results (default 20)',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'log_interaction',
+    description: `Record this interaction in the daily log. ALWAYS call this tool to maintain an audit trail. Include:
+- The user's original input
+- Your categorization decision and reasoning
+- Tags assigned
+- Where the note was stored
+- Any clarification questions asked`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        input: {
+          type: 'string',
+          description: "User's original message",
+        },
+        category: {
+          type: 'string',
+          description: 'Assigned category (Tasks, Ideas, Reference, Projects, Inbox)',
+        },
+        confidence: {
+          type: 'number',
+          description: 'Confidence score (0-100)',
+        },
+        reasoning: {
+          type: 'string',
+          description: 'Brief explanation of categorization decision',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tags assigned to the note',
+        },
+        stored_path: {
+          type: 'string',
+          description: 'Where the note was stored',
+        },
+        clarification: {
+          type: 'string',
+          description: 'Clarification question asked (if any)',
+        },
+        user_response: {
+          type: 'string',
+          description: "User's response to clarification (if any)",
+        },
+      },
+      required: ['input'],
+    },
+  },
+  {
+    name: 'send_message',
+    description: `Send a message to the user via iMessage. Use this to:
+- Confirm successful storage: "Got it! Saved as a task to follow up with Sarah."
+- Ask clarifying questions: "Is this a link to save or a concept to research?"
+- Provide feedback: "I've added this to your Reference folder with tags #topic/security."
 
-  timeoutInterval = setInterval(checkTimeouts, 60000); // Check every minute
-}
+Keep messages concise and helpful.`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          description: 'The message to send to the user',
+        },
+      },
+      required: ['message'],
+    },
+  },
+];
 
-export function stopTimeoutChecker(): void {
-  if (timeoutInterval) {
-    clearInterval(timeoutInterval);
-    timeoutInterval = null;
-    logger.info('Stopped session timeout checker');
-  }
-}
-
-async function checkTimeouts(): Promise<void> {
-  const now = Date.now();
-  const sessions = getAllSessions();
-
-  for (const session of sessions) {
-    const age = now - session.lastActivity.getTime();
-
-    if (age >= config.sessionTimeoutMs) {
-      logger.info({
-        senderId: session.senderId,
-        ageMs: age,
-        pendingInput: session.pendingInput,
-      }, 'Session timed out');
-
-      await handleTimeout(session);
-    }
-  }
-}
-
-async function handleTimeout(session: Session): Promise<void> {
-  try {
-    // Run agent with timeout context
-    const timeoutMessage = `[SYSTEM: The user has not responded to your clarification question within ${config.sessionTimeoutMs / 60000} minutes. Please store the original message "${session.pendingInput}" to the Inbox folder and send a brief notification to the user that you've saved it for later review.]`;
-
-    await runAgent(
-      timeoutMessage,
-      { recipient: session.senderId },
-      session.history
-    );
-
-    logger.info({ senderId: session.senderId }, 'Timeout handled successfully');
-  } catch (error) {
-    logger.error({ error, senderId: session.senderId }, 'Failed to handle timeout');
-  } finally {
-    deleteSession(session.senderId);
-  }
-}
-
-export { checkTimeouts }; // Export for testing
+// Export individual tool names for type safety
+export type ToolName = 'vault_write' | 'vault_read' | 'vault_list' | 'log_interaction' | 'send_message';
 ```
 
-### System Prompt Update
-Add to the system prompt instructions for handling timeout messages:
+### Tool Description Guidelines
+- Describe WHEN to use the tool, not just WHAT it does
+- Include examples of appropriate usage
+- Mention constraints and expectations
+- Guide Claude toward good decisions
 
-```
-## Timeout Handling
-If you receive a [SYSTEM: ...timeout...] message, it means the user didn't respond to your clarification question. In this case:
-1. Store the original message to Inbox with a note that clarification was requested but not received
-2. Send a brief message to the user: "I've saved your earlier message to Inbox for later review since I didn't hear back."
-3. Log the interaction with the timeout context
-```
-
-### Integration with Main App
-```typescript
-// In src/index.ts
-import { startTimeoutChecker, stopTimeoutChecker } from './sessions/timeout.js';
-
-// After starting listener
-startTimeoutChecker();
-
-// In shutdown
-const shutdown = () => {
-  logger.info('Shutting down...');
-  stopTimeoutChecker();
-  stopListener();
-  process.exit(0);
-};
-```
-
-### Unit Tests: src/sessions/timeout.test.ts
+### Unit Tests: src/agent/tools.test.ts
 Test cases:
-- Identifies expired sessions correctly
-- Ignores sessions within timeout window
-- handleTimeout calls runAgent with correct context
-- handleTimeout deletes session after handling
-- startTimeoutChecker/stopTimeoutChecker work correctly
-
-### .env.example Update
-```bash
-# Optional: Session timeout in milliseconds (default: 3600000 = 1 hour)
-SESSION_TIMEOUT_MS=3600000
-```
+- All tools have name, description, input_schema
+- Required fields are specified correctly
+- Property types match expected formats
+- Enum values are correct for vault_write folder
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, timeout tests pass
-3. File `src/sessions/timeout.ts` exists
-4. Tests exist in `src/sessions/timeout.test.ts`
-5. Config includes `sessionTimeoutMs`
-6. `.env.example` includes `SESSION_TIMEOUT_MS`
-7. Timeout checker starts with app and stops on shutdown
+2. Run `npm test` — exits 0, tools tests pass
+3. File `src/agent/tools.ts` exists
+4. Tests exist in `src/agent/tools.test.ts`
+5. TOOLS array contains exactly 5 tools

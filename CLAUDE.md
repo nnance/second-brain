@@ -100,12 +100,13 @@ vault/
 
 ## Implementation Phases
 
-The project is implemented in 4 phases with manual review between each:
+The project is implemented in 5 phases with manual review between each:
 
 1. **Phase 1**: Project Setup + iMessage Listener
-2. **Phase 2**: Agent Tools Implementation (vault_write, vault_read, vault_list, log_interaction, send_message)
-3. **Phase 3**: Agent Integration (Anthropic SDK, system prompt, agent runner)
-4. **Phase 4**: Conversation Management + Polish (sessions, timeouts, error handling)
+2. **Phase 2**: Obsidian File Writer + Wiring (messages stored to Inbox)
+3. **Phase 3**: Refactor to Agent Tools (vault_write, vault_read, vault_list, log_interaction, send_message)
+4. **Phase 4**: Agent Integration (Anthropic SDK, system prompt, agent runner)
+5. **Phase 5**: Conversation Management + Polish (sessions, timeouts, error handling)
 
 See `specs/` directory for detailed ticket specifications.
 

@@ -26,9 +26,10 @@ Phase N+1 (after approval)
 | Phase | Description | Checkpoint |
 |-------|-------------|------------|
 | 1 | Project Setup + iMessage Listener | Send text → logged to console |
-| 2 | Agent Tools Implementation | All tools work independently with tests |
-| 3 | Agent Integration | Send text → agent processes → file stored + reply sent |
-| 4 | Conversation Management + Polish | Multi-turn clarification works, timeout handling |
+| 2 | Obsidian File Writer + Wiring | Messages stored to Inbox, interaction log written |
+| 3 | Refactor to Agent Tools | Phase 2 code refactored into agent-callable tools |
+| 4 | Agent Integration | Send text → agent processes → file stored + reply sent |
+| 5 | Conversation Management + Polish | Multi-turn clarification works, timeout handling |
 
 ## Architecture
 
@@ -77,25 +78,30 @@ specs/
 ├── phase-2/
 │   ├── README.md
 │   ├── ticket-2.1.md           # Environment configuration
-│   ├── ticket-2.2.md           # Vault initialization + folder structure
-│   ├── ticket-2.3.md           # vault_write tool implementation
-│   ├── ticket-2.4.md           # vault_read tool implementation
-│   ├── ticket-2.5.md           # vault_list tool implementation
-│   ├── ticket-2.6.md           # log_interaction tool implementation
-│   └── ticket-2.7.md           # send_message tool implementation
+│   ├── ticket-2.2.md           # Vault initialization script
+│   ├── ticket-2.3.md           # Markdown file writer
+│   ├── ticket-2.4.md           # Interaction log writer
+│   └── ticket-2.5.md           # Wire iMessage to file writer
 ├── phase-3/
 │   ├── README.md
-│   ├── ticket-3.1.md           # Anthropic SDK integration
-│   ├── ticket-3.2.md           # Tool schema definitions
-│   ├── ticket-3.3.md           # System prompt creation
-│   ├── ticket-3.4.md           # Agent runner with tool dispatch
-│   └── ticket-3.5.md           # Wire iMessage to agent
-└── phase-4/
+│   ├── ticket-3.1.md           # Refactor vault writer to vault_write tool
+│   ├── ticket-3.2.md           # Implement vault_read tool
+│   ├── ticket-3.3.md           # Implement vault_list tool
+│   ├── ticket-3.4.md           # Refactor interaction log to log_interaction tool
+│   └── ticket-3.5.md           # Implement send_message tool
+├── phase-4/
+│   ├── README.md
+│   ├── ticket-4.1.md           # Anthropic SDK integration
+│   ├── ticket-4.2.md           # Tool schema definitions
+│   ├── ticket-4.3.md           # System prompt creation
+│   ├── ticket-4.4.md           # Agent runner with tool dispatch
+│   └── ticket-4.5.md           # Wire iMessage to agent
+└── phase-5/
     ├── README.md
-    ├── ticket-4.1.md           # Conversation context management
-    ├── ticket-4.2.md           # Session timeout handling
-    ├── ticket-4.3.md           # Error handling + retries
-    └── ticket-4.4.md           # End-to-end integration tests
+    ├── ticket-5.1.md           # Conversation context management
+    ├── ticket-5.2.md           # Session timeout handling
+    ├── ticket-5.3.md           # Error handling + retries
+    └── ticket-5.4.md           # End-to-end integration tests
 ```
 
 ## Technology Stack
@@ -118,9 +124,9 @@ specs/
 |----------|----------|---------|-------|
 | `VAULT_PATH` | Yes | — | 2 |
 | `LOG_LEVEL` | No | `info` | 1 |
-| `ANTHROPIC_API_KEY` | Yes | — | 3 |
-| `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | 3 |
-| `SESSION_TIMEOUT_MS` | No | `3600000` | 4 |
+| `ANTHROPIC_API_KEY` | Yes | — | 4 |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | 4 |
+| `SESSION_TIMEOUT_MS` | No | `3600000` | 5 |
 
 ## Key Design Decisions
 
