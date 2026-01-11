@@ -1,43 +1,33 @@
-# Ticket 3.1: Integrate Claude Agent SDK
+# Ticket 3.1: Anthropic SDK Integration
 
 ## Description
-
-Add the Claude Agent SDK (or Anthropic SDK) as a dependency and create a client module for interacting with Claude. Configure authentication and model selection via environment variables.
+Add the Anthropic SDK as a dependency and create a client module for interacting with Claude. Configure authentication and model selection via environment variables. This establishes the foundation for the AI agent.
 
 ## Acceptance Criteria
-
-- [ ] Anthropic Claude Agent SDK installed as a dependency
-- [ ] Claude client module exists at `src/ai/client.ts`
+- [ ] Anthropic SDK installed as a dependency
+- [ ] Claude client module exists at `src/agent/client.ts`
 - [ ] API key read from `ANTHROPIC_API_KEY` environment variable
 - [ ] Model configurable via `CLAUDE_MODEL` environment variable
 - [ ] Default model is `claude-sonnet-4-20250514`
-- [ ] Client exports a function to send prompts and receive responses
+- [ ] Client supports tool-use API format
 - [ ] Application fails fast if API key is missing
 - [ ] `.env.example` updated with new variables
 
 ## Technical Notes
 
 ### Dependencies
-
-```json
-{
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk-typescript": "^0.x"
-  }
-}
+```bash
+npm install @anthropic-ai/sdk
 ```
 
 ### Environment Variables
-
-| Variable            | Required | Default             | Description         |
-| ------------------- | -------- | ------------------- | ------------------- |
-| `ANTHROPIC_API_KEY` | Yes      | —                   | Anthropic API key   |
-| `CLAUDE_MODEL`      | No       | `claude-sonnet-4-5` | Claude model to use |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | Claude model to use |
 
 ### src/config.ts Update
-
 Add to config:
-
 ```typescript
 anthropicApiKey: string;
 claudeModel: string;
@@ -45,65 +35,27 @@ claudeModel: string;
 
 Validate `ANTHROPIC_API_KEY` is present.
 
-### src/ai/client.ts
-
+### src/agent/client.ts
 ```typescript
-import Anthropic from "@anthropic-ai/sdk";
-import { config } from "../config.js";
-import logger from "../logger.js";
+import Anthropic from '@anthropic-ai/sdk';
+import { config } from '../config.js';
+import logger from '../logger.js';
 
-const client = new Anthropic({
+// Export the client for use in agent runner
+export const anthropic = new Anthropic({
   apiKey: config.anthropicApiKey,
 });
 
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
+export const MODEL = config.claudeModel;
 
-export interface ChatOptions {
-  systemPrompt?: string;
-  maxTokens?: number;
-}
+// Type exports for tool definitions
+export type { Tool, ToolUseBlock, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
+export type { MessageParam, ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 
-export async function chat(
-  messages: ChatMessage[],
-  options: ChatOptions = {}
-): Promise<string> {
-  const { systemPrompt, maxTokens = 1024 } = options;
-
-  logger.debug(
-    { messageCount: messages.length, model: config.claudeModel },
-    "Sending request to Claude"
-  );
-
-  const response = await client.messages.create({
-    model: config.claudeModel,
-    max_tokens: maxTokens,
-    system: systemPrompt,
-    messages: messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    })),
-  });
-
-  // Extract text from response
-  const textContent = response.content.find((block) => block.type === "text");
-  if (!textContent || textContent.type !== "text") {
-    throw new Error("No text content in Claude response");
-  }
-
-  logger.debug(
-    { responseLength: textContent.text.length },
-    "Received response from Claude"
-  );
-
-  return textContent.text;
-}
+logger.info({ model: MODEL }, 'Anthropic client initialized');
 ```
 
 ### .env.example Update
-
 ```bash
 # Required: Anthropic API key
 ANTHROPIC_API_KEY=sk-ant-...
@@ -112,19 +64,15 @@ ANTHROPIC_API_KEY=sk-ant-...
 CLAUDE_MODEL=claude-sonnet-4-20250514
 ```
 
-### Unit Tests: src/ai/client.test.ts
-
+### Unit Tests: src/agent/client.test.ts
 Test cases:
-
-- Client module exports `chat` function
+- Client module exports `anthropic` and `MODEL`
 - Config validation catches missing API key
-
-Note: Actual API calls should be mocked in tests.
+- Model defaults to expected value
 
 ## Done Conditions (for Claude Code to verify)
-
 1. Run `npm run build` — exits 0
 2. Run `npm test` — exits 0
 3. Run `npm start` without `ANTHROPIC_API_KEY` — exits with error containing "ANTHROPIC_API_KEY"
-4. File `src/ai/client.ts` exists
+4. File `src/agent/client.ts` exists
 5. `.env.example` includes `ANTHROPIC_API_KEY` and `CLAUDE_MODEL`

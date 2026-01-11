@@ -1,160 +1,286 @@
-# Ticket 4.4: Implement Response Detection (New vs Clarification)
+# Ticket 4.4: End-to-End Integration Tests
 
 ## Description
-When a message arrives from a sender with a pending clarification, determine if the message is a response to the clarification or a completely new/unrelated input. Use Claude to make this determination.
+Create comprehensive integration tests that verify the entire system works correctly from message input through vault storage and user notification. These tests use mocked external dependencies (iMessage, Anthropic API) to verify the complete flow.
 
 ## Acceptance Criteria
-- [ ] Response detector module exists at `src/ai/response-detector.ts`
-- [ ] Uses Claude to classify incoming message as "response" or "new"
-- [ ] Considers the original input and clarification question for context
-- [ ] Returns classification with confidence
-- [ ] If "new", the pending clarification is handled separately (e.g., timeout or cancel)
-- [ ] Unit tests verify response parsing
+- [ ] Integration test suite exists at `src/__tests__/integration/`
+- [ ] Tests cover high-confidence direct storage flow
+- [ ] Tests cover low-confidence clarification flow
+- [ ] Tests cover multi-turn conversation
+- [ ] Tests cover session timeout
+- [ ] Tests cover error scenarios
+- [ ] Tests use mocked Anthropic client
+- [ ] Tests use mocked iMessage client
+- [ ] Tests use temporary test vault
+- [ ] All tests pass in CI
 
 ## Technical Notes
 
-### Decision Flow
+### Test Structure
 ```
-Message received from sender with pending clarification
-    │
-    ▼
-Is this a response to clarification or new input?
-    │
-    ├── Response ──▶ Use response to finalize original item
-    │
-    └── New ──▶ Process new message separately
-               └── Original clarification: start timeout or cancel
+src/__tests__/
+├── integration/
+│   ├── setup.ts              # Test setup and mocks
+│   ├── direct-storage.test.ts
+│   ├── clarification.test.ts
+│   ├── multi-turn.test.ts
+│   ├── timeout.test.ts
+│   └── error-handling.test.ts
 ```
 
-### src/ai/response-detector.ts
+### Test Setup
 ```typescript
-import { chat } from './client.js';
-import { PendingClarification } from '../state/pending-clarifications.js';
-import logger from '../logger.js';
+// src/__tests__/integration/setup.ts
+import { mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { mock } from 'node:test';
 
-export type ResponseType = 'response' | 'new';
+// Create temporary vault for tests
+export async function createTestVault(): Promise<string> {
+  const vaultPath = join(tmpdir(), `test-vault-${Date.now()}`);
 
-export interface ResponseDetectionResult {
-  type: ResponseType;
-  confidence: number;
-  reasoning: string;
+  await mkdir(join(vaultPath, '_system', 'logs'), { recursive: true });
+  await mkdir(join(vaultPath, 'Tasks'), { recursive: true });
+  await mkdir(join(vaultPath, 'Ideas'), { recursive: true });
+  await mkdir(join(vaultPath, 'Reference'), { recursive: true });
+  await mkdir(join(vaultPath, 'Projects'), { recursive: true });
+  await mkdir(join(vaultPath, 'Inbox'), { recursive: true });
+  await mkdir(join(vaultPath, 'Archive'), { recursive: true });
+
+  return vaultPath;
 }
 
-const SYSTEM_PROMPT = `You are determining if an incoming message is a response to a clarification question or a completely new/unrelated input.
-
-Context:
-- The user previously sent a message that was ambiguous
-- The system asked a clarification question
-- Now the user has sent another message
-
-Your job: Is this new message answering the clarification question, or is it a completely new/unrelated thought?
-
-SIGNALS FOR "response":
-- Directly answers the question asked
-- References options given
-- Short replies like "the first one", "yes", "task", "link"
-- Continues the same topic
-
-SIGNALS FOR "new":
-- Completely different topic
-- New task/idea/reference unrelated to original
-- Ignores the question entirely
-- Starts with "also", "btw", "new thing"
-
-Respond with JSON only:
-{
-  "type": "response|new",
-  "confidence": <0-100>,
-  "reasoning": "<brief explanation>"
-}`;
-
-export async function detectResponseType(
-  newMessage: string,
-  pending: PendingClarification
-): Promise<ResponseDetectionResult> {
-  logger.debug({ 
-    newMessageLength: newMessage.length,
-    originalInputLength: pending.originalInput.length 
-  }, 'Detecting response type');
-  
-  const prompt = `ORIGINAL INPUT:
-"${pending.originalInput}"
-
-CLARIFICATION QUESTION:
-"${pending.clarificationQuestion}"
-
-NEW MESSAGE:
-"${newMessage}"
-
-Is the new message a response to the clarification, or a completely new input?`;
-
-  const response = await chat(
-    [{ role: 'user', content: prompt }],
-    { systemPrompt: SYSTEM_PROMPT }
-  );
-  
-  const result = parseDetectionResponse(response);
-  
-  logger.info({ 
-    type: result.type, 
-    confidence: result.confidence 
-  }, 'Response type detected');
-  
-  return result;
+export async function cleanupTestVault(vaultPath: string): Promise<void> {
+  await rm(vaultPath, { recursive: true, force: true });
 }
 
-function parseDetectionResponse(response: string): ResponseDetectionResult {
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    // Default to treating as response if parsing fails
-    return {
-      type: 'response',
-      confidence: 50,
-      reasoning: 'Parse failed, defaulting to response',
-    };
-  }
-  
-  const parsed = JSON.parse(jsonMatch[0]);
-  
-  const type: ResponseType = parsed.type === 'new' ? 'new' : 'response';
-  
+// Mock Anthropic client
+export function createMockAnthropicClient() {
   return {
-    type,
-    confidence: Number(parsed.confidence) || 50,
-    reasoning: parsed.reasoning || '',
+    messages: {
+      create: mock.fn(),
+    },
+  };
+}
+
+// Mock iMessage
+export function createMockIMessage() {
+  return {
+    sendMessage: mock.fn(),
+    startListener: mock.fn(),
+    stopListener: mock.fn(),
   };
 }
 ```
 
-### Example Scenarios
+### Direct Storage Test
+```typescript
+// src/__tests__/integration/direct-storage.test.ts
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert';
+import { createTestVault, cleanupTestVault, createMockAnthropicClient } from './setup.js';
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
-**Scenario 1: Clarification response**
-- Original: "interesting article about zero-trust"
-- Question: "Is this a link to save or a concept to research?"
-- New message: "link to save"
-- Result: `{ type: "response", confidence: 95 }`
+describe('Direct Storage Flow', () => {
+  let vaultPath: string;
+  let mockClient: ReturnType<typeof createMockAnthropicClient>;
 
-**Scenario 2: New input**
-- Original: "interesting article about zero-trust"
-- Question: "Is this a link to save or a concept to research?"
-- New message: "remind me to call mom tomorrow"
-- Result: `{ type: "new", confidence: 92 }`
+  before(async () => {
+    vaultPath = await createTestVault();
+    process.env.VAULT_PATH = vaultPath;
+    mockClient = createMockAnthropicClient();
+  });
 
-**Scenario 3: Ambiguous**
-- Original: "interesting article about zero-trust"
-- Question: "Is this a link to save or a concept to research?"
-- New message: "actually both"
-- Result: `{ type: "response", confidence: 70 }`
+  after(async () => {
+    await cleanupTestVault(vaultPath);
+  });
 
-### Unit Tests: src/ai/response-detector.test.ts
-Test cases:
-- `parseDetectionResponse` handles valid response
-- `parseDetectionResponse` handles valid new
-- `parseDetectionResponse` defaults to response on parse failure
-- `parseDetectionResponse` handles missing confidence
+  it('stores high-confidence task to Tasks folder', async () => {
+    // Mock Claude responding with tool calls
+    mockClient.messages.create
+      .mockResolvedValueOnce({
+        stop_reason: 'tool_use',
+        content: [{
+          type: 'tool_use',
+          id: 'call_1',
+          name: 'vault_write',
+          input: {
+            folder: 'Tasks',
+            title: 'Follow up with Sarah',
+            content: 'Follow up with Sarah about the security audit',
+            tags: ['person/sarah', 'project/security-audit', 'priority/high'],
+            confidence: 95,
+          },
+        }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'tool_use',
+        content: [{
+          type: 'tool_use',
+          id: 'call_2',
+          name: 'log_interaction',
+          input: { input: 'remind me to follow up with Sarah about the security audit' },
+        }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'tool_use',
+        content: [{
+          type: 'tool_use',
+          id: 'call_3',
+          name: 'send_message',
+          input: { message: 'Got it! Saved as a task.' },
+        }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'Done' }],
+      });
+
+    // Run the agent
+    const result = await runAgent(
+      'remind me to follow up with Sarah about the security audit',
+      { recipient: '+15551234567' }
+    );
+
+    // Verify
+    assert.equal(result.success, true);
+
+    // Check file was created
+    const files = await readdir(join(vaultPath, 'Tasks'));
+    assert.equal(files.length, 1);
+    assert(files[0].includes('follow-up-with-sarah'));
+
+    // Check log was created
+    const logs = await readdir(join(vaultPath, '_system', 'logs'));
+    assert.equal(logs.length, 1);
+  });
+});
+```
+
+### Clarification Flow Test
+```typescript
+// src/__tests__/integration/clarification.test.ts
+describe('Clarification Flow', () => {
+  it('asks clarification for ambiguous input', async () => {
+    // Mock Claude asking for clarification (send_message but no vault_write)
+    mockClient.messages.create
+      .mockResolvedValueOnce({
+        stop_reason: 'tool_use',
+        content: [{
+          type: 'tool_use',
+          id: 'call_1',
+          name: 'log_interaction',
+          input: {
+            input: 'zero trust architecture',
+            clarification: 'Is this a link to save or a concept to research?',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'tool_use',
+        content: [{
+          type: 'tool_use',
+          id: 'call_2',
+          name: 'send_message',
+          input: { message: 'Is this a link to save or a concept to research?' },
+        }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'Asked clarification' }],
+      });
+
+    const result = await runAgent(
+      'zero trust architecture',
+      { recipient: '+15551234567' }
+    );
+
+    assert.equal(result.success, true);
+    assert(result.toolsCalled.includes('send_message'));
+    assert(!result.toolsCalled.includes('vault_write'));
+  });
+});
+```
+
+### Multi-Turn Test
+```typescript
+// src/__tests__/integration/multi-turn.test.ts
+describe('Multi-Turn Conversation', () => {
+  it('completes storage after clarification response', async () => {
+    // First turn: ask clarification
+    // Second turn: receive response and store
+
+    // ... mock setup for both turns
+
+    // Verify session is created after first turn
+    // Verify session is cleared after storage
+    // Verify file is in correct folder
+  });
+});
+```
+
+### Timeout Test
+```typescript
+// src/__tests__/integration/timeout.test.ts
+describe('Session Timeout', () => {
+  it('stores to Inbox on timeout', async () => {
+    // Create session with old lastActivity
+    // Trigger timeout check
+    // Verify file created in Inbox
+    // Verify session deleted
+  });
+});
+```
+
+### Error Handling Test
+```typescript
+// src/__tests__/integration/error-handling.test.ts
+describe('Error Handling', () => {
+  it('notifies user on API error', async () => {
+    mockClient.messages.create.mockRejectedValue(new Error('API Error'));
+
+    // Verify error notification sent
+    // Verify session cleaned up
+  });
+
+  it('retries on transient error', async () => {
+    mockClient.messages.create
+      .mockRejectedValueOnce({ status: 429 })  // Rate limit
+      .mockResolvedValueOnce({ /* success */ });
+
+    // Verify retry occurred
+    // Verify eventual success
+  });
+});
+```
+
+### Running Integration Tests
+```bash
+# Run all tests
+npm test
+
+# Run only integration tests
+npm test -- --test-name-pattern="integration"
+```
+
+### CI Configuration
+Add to existing test script or create separate integration test step:
+```json
+{
+  "scripts": {
+    "test": "node --test",
+    "test:integration": "node --test src/__tests__/integration/"
+  }
+}
+```
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, response detector tests pass
-3. File `src/ai/response-detector.ts` exists
-4. Tests exist in `src/ai/response-detector.test.ts`
+2. Run `npm test` — exits 0, all integration tests pass
+3. Integration tests exist in `src/__tests__/integration/`
+4. Tests cover: direct storage, clarification, multi-turn, timeout, errors
+5. Tests use mocked external dependencies
+6. Tests clean up temporary files

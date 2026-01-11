@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implementation plan for the Personal Knowledge Capture System. Designed for autonomous development using Claude Code with manual review checkpoints between phases.
+Implementation plan for the Personal Knowledge Capture System. The system is designed as an **autonomous AI agent** that uses tools to interact with the Obsidian vault and communicate with users. All decision-making is handled by the agent through a system prompt—application code provides tools only.
 
 ## Development Workflow
 
@@ -26,15 +26,48 @@ Phase N+1 (after approval)
 | Phase | Description | Checkpoint |
 |-------|-------------|------------|
 | 1 | Project Setup + iMessage Listener | Send text → logged to console |
-| 2 | Obsidian File Writer + Interaction Log | Send text → file in Inbox + log entry |
-| 3 | Claude Categorization + Tags | Send text → file in correct folder with tags |
-| 4 | Clarification Flow + Confirmation | Ambiguous text → clarification → storage + reply |
+| 2 | Agent Tools Implementation | All tools work independently with tests |
+| 3 | Agent Integration | Send text → agent processes → file stored + reply sent |
+| 4 | Conversation Management + Polish | Multi-turn clarification works, timeout handling |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   iMessage Listener                     │
+│                  (imessage-kit)                         │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│              Agent Runner (Anthropic SDK)               │
+│                                                         │
+│   ┌─────────────────────────────────────────────────┐   │
+│   │              System Prompt                      │   │
+│   │  - Role, vault structure, tag taxonomy          │   │
+│   │  - Decision guidelines                          │   │
+│   │  - Clarification framework                      │   │
+│   └─────────────────────────────────────────────────┘   │
+│                                                         │
+│   ┌─────────────────────────────────────────────────┐   │
+│   │                 Tool Handlers                   │   │
+│   │  vault_write | vault_read | vault_list          │   │
+│   │  log_interaction | send_message                 │   │
+│   └─────────────────────────────────────────────────┘   │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                   Obsidian Vault                        │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Directory Structure
 
 ```
 specs/
-├── README.md                    # This file
+├── DESIGN-SPEC.md              # Full system specification
+├── IMPLEMENTATION.md           # This file
 ├── phase-1/
 │   ├── README.md               # Phase overview + checkpoint
 │   ├── ticket-1.1.md           # Initialize TypeScript project
@@ -44,28 +77,25 @@ specs/
 ├── phase-2/
 │   ├── README.md
 │   ├── ticket-2.1.md           # Environment configuration
-│   ├── ticket-2.2.md           # Vault initialization script
-│   ├── ticket-2.3.md           # Markdown file writer
-│   ├── ticket-2.4.md           # Interaction log writer
-│   └── ticket-2.5.md           # Wire listener to writer
+│   ├── ticket-2.2.md           # Vault initialization + folder structure
+│   ├── ticket-2.3.md           # vault_write tool implementation
+│   ├── ticket-2.4.md           # vault_read tool implementation
+│   ├── ticket-2.5.md           # vault_list tool implementation
+│   ├── ticket-2.6.md           # log_interaction tool implementation
+│   └── ticket-2.7.md           # send_message tool implementation
 ├── phase-3/
 │   ├── README.md
-│   ├── ticket-3.1.md           # Integrate Claude Agent SDK
-│   ├── ticket-3.2.md           # Category analysis
-│   ├── ticket-3.3.md           # Existing tag discovery
-│   ├── ticket-3.4.md           # Tag generation
-│   ├── ticket-3.5.md           # Priority prediction
-│   ├── ticket-3.6.md           # Route files to correct folder
-│   └── ticket-3.7.md           # Update interaction log
+│   ├── ticket-3.1.md           # Anthropic SDK integration
+│   ├── ticket-3.2.md           # Tool schema definitions
+│   ├── ticket-3.3.md           # System prompt creation
+│   ├── ticket-3.4.md           # Agent runner with tool dispatch
+│   └── ticket-3.5.md           # Wire iMessage to agent
 └── phase-4/
     ├── README.md
-    ├── ticket-4.1.md           # Confidence threshold check
-    ├── ticket-4.2.md           # Conversation state management
-    ├── ticket-4.3.md           # Clarification question generation
-    ├── ticket-4.4.md           # Response detection
-    ├── ticket-4.5.md           # Clarification timeout
-    ├── ticket-4.6.md           # Confirmation reply
-    └── ticket-4.7.md           # Update interaction log
+    ├── ticket-4.1.md           # Conversation context management
+    ├── ticket-4.2.md           # Session timeout handling
+    ├── ticket-4.3.md           # Error handling + retries
+    └── ticket-4.4.md           # End-to-end integration tests
 ```
 
 ## Technology Stack
@@ -79,7 +109,7 @@ specs/
 | Linting/Formatting | Biome |
 | Logging | Pino |
 | iMessage | imessage-kit |
-| AI | Anthropic SDK (Claude Sonnet) |
+| AI | Anthropic SDK (Claude) |
 | Storage | Obsidian vault (markdown files) |
 
 ## Environment Variables
@@ -90,8 +120,34 @@ specs/
 | `LOG_LEVEL` | No | `info` | 1 |
 | `ANTHROPIC_API_KEY` | Yes | — | 3 |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | 3 |
-| `CONFIDENCE_THRESHOLD` | No | `70` | 4 |
-| `CLARIFICATION_TIMEOUT_MS` | No | `3600000` | 4 |
+| `SESSION_TIMEOUT_MS` | No | `3600000` | 4 |
+
+## Key Design Decisions
+
+### Agent-First Architecture
+
+All decision-making logic lives in the system prompt, not in code:
+
+| Decision | Where It Lives |
+|----------|----------------|
+| Category selection | System prompt guidelines |
+| Tag assignment | System prompt taxonomy |
+| When to clarify | System prompt framework |
+| Response tone | System prompt role definition |
+
+### Tools as Pure Functions
+
+Tools are stateless functions that execute a single action:
+- No business logic in tools
+- Tools return results; agent decides next action
+- Each tool has comprehensive tests
+
+### Conversation Context
+
+Multi-turn conversations are handled by maintaining message history:
+- Agent receives full conversation context
+- No coded state machines for clarification flow
+- Timeout triggers Inbox storage as fallback
 
 ## Post-MVP (Tracked)
 
@@ -107,4 +163,4 @@ Not planned in detail, to be revisited after MVP usage:
 
 ## Reference Documents
 
-- [Design Document](../knowledge-capture-system-design.md) — Full system specification
+- [Design Document](./DESIGN-SPEC.md) — Full system specification

@@ -1,108 +1,148 @@
-# Ticket 4.2: Implement Conversation State Management
+# Ticket 4.2: Session Timeout Handling
 
 ## Description
-Create a module to track pending clarifications. When Claude asks a clarifying question, the state manager holds the original input and analysis until a response is received or timeout occurs.
+Implement a timeout mechanism for sessions with pending clarifications. When a user doesn't respond to a clarification question within the timeout period, the system should automatically store the original message to Inbox and notify the user.
 
 ## Acceptance Criteria
-- [ ] State manager module exists at `src/state/pending-clarifications.ts`
-- [ ] Can store pending clarification with original input, analysis, and timestamp
-- [ ] Can retrieve pending clarification by sender ID
-- [ ] Can clear/resolve pending clarification
-- [ ] Single pending clarification per sender (new one replaces old)
-- [ ] Exposes list of all pending clarifications (for timeout checking)
-- [ ] Unit tests verify state operations
+- [ ] Timeout configurable via `SESSION_TIMEOUT_MS` environment variable
+- [ ] Default timeout is 3600000ms (1 hour)
+- [ ] Timeout checker runs periodically (every 60 seconds)
+- [ ] Expired sessions trigger agent run with timeout context
+- [ ] Agent stores to Inbox when timed out
+- [ ] User receives timeout notification
+- [ ] Expired session is cleaned up
+- [ ] Logging captures timeout events
+- [ ] Unit tests verify timeout logic
 
 ## Technical Notes
 
-### Why Sender-Based State
-Each sender (phone number) can have at most one pending clarification. If they send multiple messages, we need to decide how to handle them (addressed in ticket 4.4).
+### Environment Variable
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SESSION_TIMEOUT_MS` | No | `3600000` | Session timeout in milliseconds (1 hour) |
 
-### src/state/pending-clarifications.ts
+### src/config.ts Update
 ```typescript
-import { AnalysisResult } from '../ai/analyzer.js';
+sessionTimeoutMs: number;
+
+// In loadConfig():
+sessionTimeoutMs: Number(process.env.SESSION_TIMEOUT_MS) || 3600000,
+```
+
+### Timeout Checker Module
+```typescript
+// src/sessions/timeout.ts
+import { getAllSessions, deleteSession, getSession } from './store.js';
+import { runAgent } from '../agent/runner.js';
+import { config } from '../config.js';
 import logger from '../logger.js';
 
-export interface PendingClarification {
-  senderId: string;
-  originalInput: string;
-  analysis: AnalysisResult;
-  clarificationQuestion: string;
-  createdAt: Date;
+let timeoutInterval: NodeJS.Timeout | null = null;
+
+export function startTimeoutChecker(): void {
+  if (timeoutInterval) return;
+
+  logger.info({ timeoutMs: config.sessionTimeoutMs }, 'Starting session timeout checker');
+
+  timeoutInterval = setInterval(checkTimeouts, 60000); // Check every minute
 }
 
-// In-memory store (single process, no persistence needed)
-const pendingClarifications = new Map<string, PendingClarification>();
-
-export function setPendingClarification(clarification: PendingClarification): void {
-  const existing = pendingClarifications.get(clarification.senderId);
-  if (existing) {
-    logger.warn({ senderId: clarification.senderId }, 'Replacing existing pending clarification');
+export function stopTimeoutChecker(): void {
+  if (timeoutInterval) {
+    clearInterval(timeoutInterval);
+    timeoutInterval = null;
+    logger.info('Stopped session timeout checker');
   }
-  
-  pendingClarifications.set(clarification.senderId, clarification);
-  logger.debug({ senderId: clarification.senderId }, 'Pending clarification stored');
 }
 
-export function getPendingClarification(senderId: string): PendingClarification | undefined {
-  return pendingClarifications.get(senderId);
-}
+async function checkTimeouts(): Promise<void> {
+  const now = Date.now();
+  const sessions = getAllSessions();
 
-export function hasPendingClarification(senderId: string): boolean {
-  return pendingClarifications.has(senderId);
-}
+  for (const session of sessions) {
+    const age = now - session.lastActivity.getTime();
 
-export function clearPendingClarification(senderId: string): boolean {
-  const existed = pendingClarifications.delete(senderId);
-  if (existed) {
-    logger.debug({ senderId }, 'Pending clarification cleared');
+    if (age >= config.sessionTimeoutMs) {
+      logger.info({
+        senderId: session.senderId,
+        ageMs: age,
+        pendingInput: session.pendingInput,
+      }, 'Session timed out');
+
+      await handleTimeout(session);
+    }
   }
-  return existed;
 }
 
-export function getAllPendingClarifications(): PendingClarification[] {
-  return Array.from(pendingClarifications.values());
+async function handleTimeout(session: Session): Promise<void> {
+  try {
+    // Run agent with timeout context
+    const timeoutMessage = `[SYSTEM: The user has not responded to your clarification question within ${config.sessionTimeoutMs / 60000} minutes. Please store the original message "${session.pendingInput}" to the Inbox folder and send a brief notification to the user that you've saved it for later review.]`;
+
+    await runAgent(
+      timeoutMessage,
+      { recipient: session.senderId },
+      session.history
+    );
+
+    logger.info({ senderId: session.senderId }, 'Timeout handled successfully');
+  } catch (error) {
+    logger.error({ error, senderId: session.senderId }, 'Failed to handle timeout');
+  } finally {
+    deleteSession(session.senderId);
+  }
 }
 
-export function getPendingClarificationCount(): number {
-  return pendingClarifications.size;
-}
-
-// For testing
-export function clearAllPendingClarifications(): void {
-  pendingClarifications.clear();
-  logger.debug('All pending clarifications cleared');
-}
+export { checkTimeouts }; // Export for testing
 ```
 
-### State Structure
+### System Prompt Update
+Add to the system prompt instructions for handling timeout messages:
+
+```
+## Timeout Handling
+If you receive a [SYSTEM: ...timeout...] message, it means the user didn't respond to your clarification question. In this case:
+1. Store the original message to Inbox with a note that clarification was requested but not received
+2. Send a brief message to the user: "I've saved your earlier message to Inbox for later review since I didn't hear back."
+3. Log the interaction with the timeout context
+```
+
+### Integration with Main App
 ```typescript
-{
-  senderId: "+15551234567",
-  originalInput: "interesting article about zero-trust",
-  analysis: { /* AnalysisResult from ticket 3.6 */ },
-  clarificationQuestion: "Is this a link to save or a concept to research?",
-  createdAt: Date
-}
+// In src/index.ts
+import { startTimeoutChecker, stopTimeoutChecker } from './sessions/timeout.js';
+
+// After starting listener
+startTimeoutChecker();
+
+// In shutdown
+const shutdown = () => {
+  logger.info('Shutting down...');
+  stopTimeoutChecker();
+  stopListener();
+  process.exit(0);
+};
 ```
 
-### Memory Considerations
-- In-memory storage is appropriate here since:
-  - Pending clarifications are short-lived
-  - Process restart clears state (acceptable for MVP)
-  - Volume is low (personal use)
-
-### Unit Tests: src/state/pending-clarifications.test.ts
+### Unit Tests: src/sessions/timeout.test.ts
 Test cases:
-- `setPendingClarification` stores clarification
-- `getPendingClarification` retrieves by sender
-- `getPendingClarification` returns undefined for unknown sender
-- `hasPendingClarification` returns correct boolean
-- `clearPendingClarification` removes clarification
-- `getAllPendingClarifications` returns all pending
-- Setting new clarification for same sender replaces old one
+- Identifies expired sessions correctly
+- Ignores sessions within timeout window
+- handleTimeout calls runAgent with correct context
+- handleTimeout deletes session after handling
+- startTimeoutChecker/stopTimeoutChecker work correctly
+
+### .env.example Update
+```bash
+# Optional: Session timeout in milliseconds (default: 3600000 = 1 hour)
+SESSION_TIMEOUT_MS=3600000
+```
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, state tests pass
-3. File `src/state/pending-clarifications.ts` exists
-4. Tests exist in `src/state/pending-clarifications.test.ts`
+2. Run `npm test` — exits 0, timeout tests pass
+3. File `src/sessions/timeout.ts` exists
+4. Tests exist in `src/sessions/timeout.test.ts`
+5. Config includes `sessionTimeoutMs`
+6. `.env.example` includes `SESSION_TIMEOUT_MS`
+7. Timeout checker starts with app and stops on shutdown

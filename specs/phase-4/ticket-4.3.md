@@ -1,136 +1,219 @@
-# Ticket 4.3: Implement Clarification Question Generation
+# Ticket 4.3: Error Handling + Retries
 
 ## Description
-Create a module that generates contextual clarification questions when categorization confidence is low. Questions should be specific to the ambiguity, not generic.
+Implement robust error handling throughout the system, including retries for transient failures (API errors, network issues) and graceful degradation when errors occur. The system should never crash due to individual message failures.
 
 ## Acceptance Criteria
-- [ ] Clarifier module exists at `src/ai/clarifier.ts`
-- [ ] Uses Claude to generate targeted clarification question
-- [ ] Question references the specific ambiguity (from reasoning)
-- [ ] Question offers concrete options when possible
-- [ ] Question is concise (appropriate for iMessage)
-- [ ] Unit tests verify response parsing
+- [ ] API calls retry on transient failures (rate limits, network errors)
+- [ ] Configurable retry count and backoff
+- [ ] Tool failures don't crash the agent loop
+- [ ] Failed messages are logged with full context
+- [ ] User receives error notification if processing fails completely
+- [ ] Errors don't affect other sessions
+- [ ] Health check endpoint or logging for monitoring
+- [ ] Unit tests verify retry logic
 
 ## Technical Notes
 
-### Clarification Style (from design doc)
-Rather than generic questions, ask targeted ones:
-- "Is this a link to save, a concept to research, or a thought to capture?"
-- "Should this be tracked as a task or just stored as a reference?"
-- "Is this related to the security-audit project or something new?"
-
-### src/ai/clarifier.ts
+### Retry Configuration
 ```typescript
-import { chat } from './client.js';
-import { AnalysisResult } from './analyzer.js';
+// src/config.ts additions
+maxRetries: number;      // Default 3
+retryDelayMs: number;    // Default 1000 (exponential backoff)
+
+// In loadConfig():
+maxRetries: Number(process.env.MAX_RETRIES) || 3,
+retryDelayMs: Number(process.env.RETRY_DELAY_MS) || 1000,
+```
+
+### Retry Utility
+```typescript
+// src/utils/retry.ts
 import logger from '../logger.js';
+import { config } from '../config.js';
 
-export interface ClarificationResult {
-  question: string;
-  options: string[];  // Suggested responses
+export interface RetryOptions {
+  maxRetries?: number;
+  delayMs?: number;
+  shouldRetry?: (error: unknown) => boolean;
 }
 
-const SYSTEM_PROMPT = `You are a clarification assistant for a personal knowledge capture system.
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const {
+    maxRetries = config.maxRetries,
+    delayMs = config.retryDelayMs,
+    shouldRetry = isRetryableError,
+  } = options;
 
-The system is uncertain about how to categorize an input. Generate a brief, targeted clarification question.
+  let lastError: unknown;
 
-GUIDELINES:
-1. Reference the specific ambiguity—don't ask generic questions
-2. Offer 2-4 concrete options when possible
-3. Keep it short—this will be sent via text message
-4. Be conversational, not robotic
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
 
-CATEGORIES:
-- Tasks: Things to do, follow-ups, reminders
-- Ideas: Thoughts to explore, concepts to develop
-- Reference: Information to save—links, facts, articles
-- Projects: Related to longer-running initiatives
+      if (attempt > maxRetries || !shouldRetry(error)) {
+        throw error;
+      }
 
-Respond with JSON only:
-{
-  "question": "<your clarification question>",
-  "options": ["option1", "option2", ...]
-}`;
+      const delay = delayMs * Math.pow(2, attempt - 1); // Exponential backoff
+      logger.warn({ attempt, maxRetries, delay, error }, 'Operation failed, retrying...');
 
-export async function generateClarificationQuestion(
-  input: string,
-  analysis: AnalysisResult
-): Promise<ClarificationResult> {
-  logger.debug({ 
-    confidence: analysis.confidence,
-    reasoning: analysis.reasoning 
-  }, 'Generating clarification question');
-  
-  const prompt = `ORIGINAL INPUT:
-"${input}"
-
-CURRENT ANALYSIS:
-- Best guess category: ${analysis.category}
-- Confidence: ${analysis.confidence}%
-- Uncertainty reason: ${analysis.reasoning}
-
-Generate a clarification question to resolve the uncertainty.`;
-
-  const response = await chat(
-    [{ role: 'user', content: prompt }],
-    { systemPrompt: SYSTEM_PROMPT }
-  );
-  
-  const result = parseClarificationResponse(response);
-  
-  logger.info({ question: result.question }, 'Clarification question generated');
-  
-  return result;
-}
-
-function parseClarificationResponse(response: string): ClarificationResult {
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('No JSON found in clarification response');
+      await sleep(delay);
+    }
   }
-  
-  const parsed = JSON.parse(jsonMatch[0]);
-  
-  return {
-    question: parsed.question || 'Could you clarify what you want to do with this?',
-    options: Array.isArray(parsed.options) ? parsed.options : [],
-  };
+
+  throw lastError;
 }
 
-// Format question for sending via iMessage
-export function formatClarificationMessage(result: ClarificationResult): string {
-  let message = result.question;
-  
-  if (result.options.length > 0) {
-    message += '\n\nOptions: ' + result.options.join(', ');
+function isRetryableError(error: unknown): boolean {
+  // Retry on network errors and rate limits
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('network') ||
+      message.includes('timeout') ||
+      message.includes('rate limit') ||
+      message.includes('429') ||
+      message.includes('503') ||
+      message.includes('connection')
+    );
   }
-  
-  return message;
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 ```
 
-### Example Input/Output
+### Updated Agent Runner
+```typescript
+// In src/agent/runner.ts
+import { withRetry } from '../utils/retry.js';
 
-Input: "interesting article about zero-trust architecture"
-Analysis: `{ category: "Reference", confidence: 58, reasoning: "Topic clear, but unclear if link, note, or research item" }`
+// Wrap API call with retry
+const response = await withRetry(
+  () => anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: SYSTEM_PROMPT,
+    tools: TOOLS,
+    messages,
+  }),
+  { shouldRetry: isApiRetryable }
+);
 
-Generated:
-```json
-{
-  "question": "Is this a link you want me to save, a concept to research later, or a thought you want to capture?",
-  "options": ["link to save", "research topic", "thought to capture"]
+function isApiRetryable(error: unknown): boolean {
+  // Check for Anthropic-specific retryable errors
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status: number }).status;
+    return status === 429 || status >= 500;
+  }
+  return false;
 }
 ```
 
-### Unit Tests: src/ai/clarifier.test.ts
+### Error Notification to User
+When processing completely fails, notify the user:
+```typescript
+// In message handler
+try {
+  const result = await runAgent(text, context, history);
+  // ... handle result
+} catch (error) {
+  logger.error({ error, sender, text }, 'Failed to process message');
+
+  // Try to notify user (don't retry this to avoid loops)
+  try {
+    await sendMessage({
+      message: "Sorry, I couldn't process your message. Please try again later.",
+      recipient: sender,
+    });
+  } catch {
+    // Log but don't fail further
+    logger.error('Failed to send error notification');
+  }
+
+  // Clean up session
+  deleteSession(sender);
+}
+```
+
+### Error Categories
+```typescript
+// src/errors/types.ts
+export class RetryableError extends Error {
+  constructor(message: string, public readonly cause?: Error) {
+    super(message);
+    this.name = 'RetryableError';
+  }
+}
+
+export class PermanentError extends Error {
+  constructor(message: string, public readonly cause?: Error) {
+    super(message);
+    this.name = 'PermanentError';
+  }
+}
+
+export class ToolError extends Error {
+  constructor(
+    message: string,
+    public readonly toolName: string,
+    public readonly cause?: Error
+  ) {
+    super(message);
+    this.name = 'ToolError';
+  }
+}
+```
+
+### Health Logging
+Periodic health log for monitoring:
+```typescript
+// src/health.ts
+import { getAllSessions } from './sessions/store.js';
+import logger from './logger.js';
+
+let healthInterval: NodeJS.Timeout | null = null;
+
+export function startHealthLogger(): void {
+  healthInterval = setInterval(() => {
+    const sessions = getAllSessions();
+    logger.info({
+      event: 'health_check',
+      activeSessions: sessions.length,
+      timestamp: new Date().toISOString(),
+    }, 'Health check');
+  }, 300000); // Every 5 minutes
+}
+
+export function stopHealthLogger(): void {
+  if (healthInterval) {
+    clearInterval(healthInterval);
+    healthInterval = null;
+  }
+}
+```
+
+### Unit Tests: src/utils/retry.test.ts
 Test cases:
-- `parseClarificationResponse` handles valid JSON
-- `parseClarificationResponse` provides default question on missing field
-- `formatClarificationMessage` includes options when present
-- `formatClarificationMessage` omits options section when empty
+- Succeeds on first attempt
+- Retries on retryable error
+- Fails immediately on non-retryable error
+- Respects max retry limit
+- Applies exponential backoff
+- Custom shouldRetry function works
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, clarifier tests pass
-3. File `src/ai/clarifier.ts` exists
-4. Tests exist in `src/ai/clarifier.test.ts`
+2. Run `npm test` — exits 0, retry tests pass
+3. File `src/utils/retry.ts` exists
+4. Tests exist in `src/utils/retry.test.ts`
+5. Agent runner uses retry wrapper
+6. Failed messages notify user and clean up session

@@ -1,18 +1,20 @@
 # Personal Knowledge Capture System
 
-## Design Document v0.1
+## Design Document v0.2
 
-**Created:** 2026-01-10  
+**Created:** 2026-01-10
+**Updated:** 2026-01-11
 **Status:** Draft
 
 ---
 
 ## Overview
 
-A personal system for capturing thoughts, ideas, tasks, and reference material via natural language input. The system categorizes and stores items in an Obsidian vault, with Claude providing intelligent categorization and a confidence-based workflow to ensure accuracy.
+A personal system for capturing thoughts, ideas, tasks, and reference material via natural language input. The system is built as an **autonomous AI agent** that uses tools to interact with the Obsidian vault and communicate with the user. All decision-making—categorization, tagging, when to ask clarifying questions, where to store items—is handled by the AI agent through a system prompt, not coded application logic.
 
 ### Design Principles
 
+- **Agent-first architecture** — Claude makes all decisions; application code provides tools only
 - **Minimal dependencies** — Favor simple, zero-dependency libraries where possible
 - **Single source of truth** — Obsidian vault only; no syncing to external systems
 - **Tags over folders** — Flat folder structure with hierarchical tags for flexible organization
@@ -23,6 +25,8 @@ A personal system for capturing thoughts, ideas, tasks, and reference material v
 
 ## Architecture
 
+The system follows an **agentic architecture** where the AI agent is the decision-maker and the application provides tools as capabilities.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                   Interaction Layer                     │
@@ -31,14 +35,25 @@ A personal system for capturing thoughts, ideas, tasks, and reference material v
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                 Categorization Engine                   │
-│                   (Claude Agent SDK)                    │
+│                    AI Agent (Claude)                    │
 │                                                         │
 │   ┌─────────────────────────────────────────────────┐   │
-│   │  Input → Analysis → Confidence Score            │   │
+│   │              System Prompt                      │   │
+│   │  - Role & personality                           │   │
+│   │  - Vault structure knowledge                    │   │
+│   │  - Tag taxonomy                                 │   │
+│   │  - Decision guidelines                          │   │
+│   │  - When to clarify vs store                     │   │
+│   └─────────────────────────────────────────────────┘   │
+│                                                         │
+│   ┌─────────────────────────────────────────────────┐   │
+│   │                   Tools                         │   │
 │   │                                                 │   │
-│   │  High confidence    → Store directly            │   │
-│   │  Low confidence     → Clarify, then store       │   │
+│   │  vault_read      - Read notes from vault        │   │
+│   │  vault_write     - Create/update notes          │   │
+│   │  vault_list      - List files in folders        │   │
+│   │  log_interaction - Write to interaction log     │   │
+│   │  send_message    - Reply to user via iMessage   │   │
 │   └─────────────────────────────────────────────────┘   │
 └─────────────────────────┬───────────────────────────────┘
                           │
@@ -48,6 +63,14 @@ A personal system for capturing thoughts, ideas, tasks, and reference material v
 │                   (Obsidian Vault)                      │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### Key Architectural Decisions
+
+1. **No hardcoded categorization logic** — The agent decides categories based on system prompt guidelines
+2. **No hardcoded confidence thresholds** — The agent judges when it needs clarification
+3. **No hardcoded tag rules** — The agent follows tag taxonomy from system prompt
+4. **Tools are capabilities, not decisions** — Tools execute actions; the agent decides when/how to use them
+5. **Conversation state in agent context** — Multi-turn clarification handled naturally by agent context
 
 ---
 
@@ -162,30 +185,195 @@ Waiting for Sarah to send the updated compliance checklist.
 
 ---
 
-## Confidence-Based Categorization
+## Agent Tools
 
-Claude analyzes each input and assigns a confidence score based on clarity of intent, category match, and available context.
+The AI agent has access to the following tools. Each tool is a capability that the agent can invoke; the agent decides when and how to use them.
 
-### Confidence Handling
+### vault_write
 
-**High confidence (contextually clear):**
-- Store directly to appropriate folder
-- Log the interaction
-- Confirm to user
+Creates or updates a note in the Obsidian vault.
 
-**Low confidence (ambiguous):**
-- Do not store yet
-- Ask clarifying question with context: "I'm 65% confident this is a task vs. a reference note—which is it?"
-- Once clarified, store with updated confidence
-- If still unclear after clarification, store to `Inbox/` for manual triage
+```typescript
+interface VaultWriteParams {
+  folder: 'Tasks' | 'Ideas' | 'Reference' | 'Projects' | 'Inbox' | 'Archive';
+  title: string;           // Note title (used for filename slug)
+  content: string;         // Markdown content (without frontmatter)
+  tags: string[];          // Tags without # prefix
+  confidence: number;      // 0-100 categorization confidence
+}
 
-### Clarification Style
+interface VaultWriteResult {
+  success: boolean;
+  filepath: string;        // Full path to created file
+  error?: string;
+}
+```
 
-Rather than a hard numeric threshold, Claude considers *why* it's uncertain and asks targeted questions. Examples:
+### vault_read
 
-- "Is this a link to save, a concept to research, or a thought to capture?"
-- "Should this be tracked as a task or just stored as a reference?"
-- "Is this related to the security-audit project or something new?"
+Reads an existing note from the vault.
+
+```typescript
+interface VaultReadParams {
+  filepath: string;        // Path relative to vault root
+}
+
+interface VaultReadResult {
+  success: boolean;
+  content?: string;        // Full file content including frontmatter
+  error?: string;
+}
+```
+
+### vault_list
+
+Lists files in a vault folder, optionally filtered by tags.
+
+```typescript
+interface VaultListParams {
+  folder?: string;         // Folder to list (all if omitted)
+  tags?: string[];         // Filter by tags
+  limit?: number;          // Max results (default 20)
+}
+
+interface VaultListResult {
+  success: boolean;
+  files: Array<{
+    filepath: string;
+    title: string;
+    tags: string[];
+    created: string;
+  }>;
+}
+```
+
+### log_interaction
+
+Appends an entry to the daily interaction log.
+
+```typescript
+interface LogInteractionParams {
+  input: string;           // User's original message
+  category?: string;       // Assigned category
+  confidence?: number;     // Confidence score
+  reasoning?: string;      // Why this categorization
+  tags?: string[];         // Assigned tags
+  stored_path?: string;    // Where the note was stored
+  clarification?: string;  // Clarification question asked
+  user_response?: string;  // User's clarification response
+}
+
+interface LogInteractionResult {
+  success: boolean;
+  log_path: string;        // Path to log file
+}
+```
+
+### send_message
+
+Sends a message back to the user via iMessage.
+
+```typescript
+interface SendMessageParams {
+  message: string;         // Message to send
+}
+
+interface SendMessageResult {
+  success: boolean;
+  error?: string;
+}
+```
+
+---
+
+## System Prompt
+
+The agent's behavior is defined by a system prompt that provides context, guidelines, and decision frameworks. The system prompt contains:
+
+### Role Definition
+- Personal knowledge assistant that helps capture and organize information
+- Concise, helpful responses
+- Proactive clarification when uncertain
+
+### Vault Structure Knowledge
+- Folder purposes (Tasks, Ideas, Reference, Projects, Inbox, Archive)
+- File naming conventions
+- Frontmatter format
+
+### Tag Taxonomy
+- Entity tags: `#person/{name}`, `#project/{name}`, `#topic/{name}`, `#company/{name}`
+- Priority tags: `#priority/urgent|high|normal|low|someday`
+- Status tags: `#status/waiting|active|scheduled|done`
+
+### Decision Guidelines
+
+The system prompt instructs the agent to:
+
+1. **Analyze intent** — Determine what the user wants to capture
+2. **Assess confidence** — Evaluate how certain the categorization is
+3. **Decide action** — Either store directly or ask for clarification
+4. **Use appropriate tools** — Call tools to execute the decision
+5. **Always log** — Record every interaction for auditability
+
+### Clarification Framework
+
+Rather than hardcoded thresholds, the system prompt guides the agent on when clarification is needed:
+
+- **Clear intent** → Store directly, confirm to user
+- **Ambiguous category** → Ask: "Is this a task or a reference?"
+- **Missing context** → Ask: "Is this related to [project] or something new?"
+- **Multiple interpretations** → Present options: "I could store this as A or B—which fits better?"
+
+---
+
+## Agent Behavior Examples
+
+### Example 1: High Confidence Capture
+
+**User:** "remind me to follow up with Sarah about the security audit"
+
+**Agent reasoning:**
+- Clear action verb ("remind me to follow up")
+- Named person (Sarah)
+- Specific topic (security audit)
+- High confidence this is a Task
+
+**Agent actions:**
+1. Call `vault_write` with folder: "Tasks", tags: ["person/sarah", "project/security-audit", "priority/high", "status/waiting"]
+2. Call `log_interaction` with full details
+3. Call `send_message` with confirmation: "Got it! Saved as a task to follow up with Sarah about the security audit."
+
+### Example 2: Low Confidence - Clarification Needed
+
+**User:** "interesting article about zero-trust architecture"
+
+**Agent reasoning:**
+- Topic is clear (zero-trust architecture)
+- Unclear if this is: a link to save, a concept to research, or a thought to expand on
+- Should ask for clarification
+
+**Agent actions:**
+1. Call `log_interaction` with clarification note
+2. Call `send_message`: "Is this a link you want me to save, a concept to research later, or a thought you want to capture?"
+
+**User response:** "link to save"
+
+**Agent actions:**
+1. Call `vault_write` with folder: "Reference", tags: ["topic/security", "topic/zero-trust"]
+2. Call `log_interaction` with clarification resolution
+3. Call `send_message`: "Saved to Reference. Do you have the URL to add?"
+
+### Example 3: Context-Aware Decision
+
+**User:** "call mom"
+
+**Agent reasoning:**
+- Very brief input
+- Could be a task or just a note
+- Context needed
+
+**Agent actions:**
+1. Call `send_message`: "Should I save this as a task to complete, or just capture it as a note?"
 
 ---
 
@@ -322,3 +510,4 @@ Claude should suggest new tags when encountering novel topics that don't fit exi
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1 | 2026-01-10 | Initial draft |
+| 0.2 | 2026-01-11 | Redesigned as AI agent architecture with tools |

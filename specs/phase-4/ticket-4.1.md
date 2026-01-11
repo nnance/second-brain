@@ -1,85 +1,153 @@
-# Ticket 4.1: Implement Confidence Threshold Check
+# Ticket 4.1: Conversation Context Management
 
 ## Description
-Add logic to check if categorization confidence meets the threshold. If below threshold, the system should trigger the clarification flow instead of storing directly.
+Implement a session store that maintains conversation history per sender. This allows the agent to receive full context when a user responds to a clarification question, enabling natural multi-turn conversations.
 
 ## Acceptance Criteria
-- [ ] Confidence threshold configurable via `CONFIDENCE_THRESHOLD` env var
-- [ ] Default threshold is 70
-- [ ] `shouldClarify()` function returns true when confidence below threshold
-- [ ] Message handler branches based on confidence check
-- [ ] Config module updated with new variable
-- [ ] Unit tests verify threshold logic
+- [ ] Session store module exists at `src/sessions/store.ts`
+- [ ] Sessions are keyed by sender ID
+- [ ] Sessions store conversation history (MessageParam[])
+- [ ] Sessions track last activity timestamp
+- [ ] Sessions can be created, retrieved, updated, and deleted
+- [ ] Agent runner receives conversation history from session
+- [ ] After agent run, updated history is saved back to session
+- [ ] Sessions are in-memory (no persistence required for MVP)
+- [ ] Unit tests verify session operations
 
 ## Technical Notes
 
-### Environment Variable
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONFIDENCE_THRESHOLD` | No | `70` | Minimum confidence to store without clarification |
-
-### src/config.ts Update
+### Session Interface
 ```typescript
-confidenceThreshold: number;
+// src/sessions/store.ts
+import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 
-// In loadConfig():
-confidenceThreshold: Number(process.env.CONFIDENCE_THRESHOLD) || 70,
-```
+export interface Session {
+  senderId: string;
+  history: MessageParam[];
+  lastActivity: Date;
+  pendingInput?: string;  // Original message if awaiting clarification
+}
 
-### src/ai/analyzer.ts Update
-```typescript
-import { config } from '../config.js';
+// In-memory store
+const sessions = new Map<string, Session>();
 
-export function shouldClarify(confidence: number): boolean {
-  return confidence < config.confidenceThreshold;
+export function getSession(senderId: string): Session | undefined {
+  return sessions.get(senderId);
+}
+
+export function createSession(senderId: string): Session {
+  const session: Session = {
+    senderId,
+    history: [],
+    lastActivity: new Date(),
+  };
+  sessions.set(senderId, session);
+  return session;
+}
+
+export function updateSession(senderId: string, updates: Partial<Session>): Session | undefined {
+  const session = sessions.get(senderId);
+  if (!session) return undefined;
+
+  const updated = {
+    ...session,
+    ...updates,
+    lastActivity: new Date(),
+  };
+  sessions.set(senderId, updated);
+  return updated;
+}
+
+export function deleteSession(senderId: string): boolean {
+  return sessions.delete(senderId);
+}
+
+export function getOrCreateSession(senderId: string): Session {
+  return getSession(senderId) ?? createSession(senderId);
+}
+
+export function getAllSessions(): Session[] {
+  return Array.from(sessions.values());
 }
 ```
 
-### Updated Message Flow
-```
-Input received
-    │
-    ▼
-Analyze input
-    │
-    ▼
-Confidence >= threshold? ──Yes──▶ Store directly
-    │
-    No
-    │
-    ▼
-Trigger clarification flow (Phase 4.2+)
-```
-
-### src/index.ts Update (structure only)
+### Updated Message Handler
 ```typescript
-const analysis = await analyzeInput(message.text);
+// In src/index.ts or new message handler module
 
-if (shouldClarify(analysis.confidence)) {
-  // TODO: Clarification flow (tickets 4.2-4.5)
-  logger.info({ confidence: analysis.confidence }, 'Confidence below threshold, clarification needed');
-} else {
-  // Existing direct storage flow
-  const result = await writeNote({ ... });
-  await writeInteractionLog({ ... });
+import { getOrCreateSession, updateSession, deleteSession } from './sessions/store.js';
+import { runAgent } from './agent/runner.js';
+import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
+
+async function handleMessage(text: string, sender: string) {
+  // Get or create session
+  const session = getOrCreateSession(sender);
+
+  // Run agent with conversation history
+  const result = await runAgent(text, { recipient: sender }, session.history);
+
+  if (result.success) {
+    // Agent completed - check if it asked a clarification or completed storage
+    // We can infer this from tool calls: if send_message but no vault_write, likely clarifying
+    const askedClarification = result.toolsCalled.includes('send_message') &&
+                               !result.toolsCalled.includes('vault_write');
+
+    if (askedClarification) {
+      // Save conversation history for next message
+      updateSession(sender, {
+        history: buildUpdatedHistory(session.history, text, result),
+        pendingInput: session.pendingInput ?? text,
+      });
+    } else {
+      // Completed - clear session
+      deleteSession(sender);
+    }
+  } else {
+    // Error - keep session for retry? Or clear? Let's clear for now.
+    deleteSession(sender);
+  }
 }
 ```
 
-### .env.example Update
-```bash
-# Optional: Minimum confidence to store without clarification (default: 70)
-CONFIDENCE_THRESHOLD=70
+### Building Conversation History
+After each agent run, we need to reconstruct the conversation history:
+```typescript
+function buildUpdatedHistory(
+  existingHistory: MessageParam[],
+  userMessage: string,
+  agentResult: AgentResult
+): MessageParam[] {
+  // The agent runner handles this internally during the loop
+  // We need to extract the final history from the runner
+  // Consider returning full history from runAgent
+}
 ```
 
-### Unit Tests: src/ai/analyzer.test.ts
+### Updated Agent Runner Interface
+The agent runner should return the conversation history:
+```typescript
+export interface AgentResult {
+  success: boolean;
+  toolsCalled: string[];
+  history: MessageParam[];  // Add this
+  error?: string;
+}
+```
+
+### Unit Tests: src/sessions/store.test.ts
 Test cases:
-- `shouldClarify` returns true when below threshold
-- `shouldClarify` returns false when at threshold
-- `shouldClarify` returns false when above threshold
+- createSession creates with empty history
+- getSession returns undefined for unknown sender
+- getOrCreateSession creates if not exists
+- getOrCreateSession returns existing if exists
+- updateSession updates fields and timestamp
+- deleteSession removes session
+- Sessions are isolated by sender ID
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0
-3. `shouldClarify(60)` returns true with default threshold
-4. `shouldClarify(70)` returns false with default threshold
-5. `CONFIDENCE_THRESHOLD=50` makes `shouldClarify(60)` return false
+2. Run `npm test` — exits 0, session store tests pass
+3. File `src/sessions/store.ts` exists
+4. Tests exist in `src/sessions/store.test.ts`
+5. Agent runner returns conversation history
+6. Message handler uses sessions to maintain context
