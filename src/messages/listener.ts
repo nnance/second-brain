@@ -19,11 +19,28 @@ export async function startListener(handler: MessageHandler): Promise<void> {
   try {
     sdk = new IMessageSDK({
       debug: process.env.LOG_LEVEL === "debug",
+      watcher: {
+        pollInterval: 1000, // Check every 1 second
+        excludeOwnMessages: false, // Get all messages for debugging
+      },
     });
 
     await sdk.startWatching({
       onMessage: async (message: Message) => {
+        logger.debug(
+          {
+            event: "message_raw",
+            sender: message.sender,
+            text: message.text,
+            isFromMe: message.isFromMe,
+            chatId: message.chatId,
+            guid: message.guid,
+          },
+          "Raw message received from SDK",
+        );
+
         if (message.isFromMe) {
+          logger.debug({ sender: message.sender }, "Skipping own message");
           return;
         }
 
