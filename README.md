@@ -39,17 +39,44 @@ Reference/2026-01-10_zero-trust-architecture-article.md
 ## Requirements
 
 - macOS with Messages.app signed into a dedicated iMessage account
-- Node.js (LTS)
+- Node.js 20+ (LTS)
 - An Obsidian vault
 - Anthropic API key
 
 ## Installation
+
+### 1. Clone and install dependencies
 
 ```bash
 git clone <repo-url>
 cd second-brain
 npm install
 ```
+
+### 2. Grant Full Disk Access (required)
+
+The app reads directly from the macOS Messages database, which requires Full Disk Access permission.
+
+1. Open **System Settings** → **Privacy & Security** → **Full Disk Access**
+2. Click the **+** button
+3. Add the app you'll run `npm start` from:
+   - **Terminal**: `/Applications/Utilities/Terminal.app`
+   - **VS Code**: `/Applications/Visual Studio Code.app`
+   - **Cursor**: `/Applications/Cursor.app`
+   - **iTerm**: `/Applications/iTerm.app`
+4. **Restart your terminal/IDE completely** (quit and reopen)
+
+Verify the permission is working:
+
+```bash
+ls ~/Library/Messages/chat.db
+```
+
+If you see the file path, you're good. If you get "Operation not permitted", the permission hasn't been granted or the app needs to be restarted.
+
+### 3. Sign into Messages.app
+
+Sign into Messages.app with a dedicated iMessage account that will receive your capture messages.
 
 ## Configuration
 
