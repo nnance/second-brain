@@ -38,29 +38,29 @@ export async function startListener(handler: MessageHandler): Promise<void> {
       const incomingMessage: IncomingMessage = {
         sender: message.handle?.address || "unknown",
         text: message.text || "",
-        timestamp: new Date(message.dateCreated || Date.now()),
+        timestamp: new Date(message.dateCreated ?? Date.now()),
         chatGuid: message.chats?.[0]?.guid || "",
         messageGuid: message.guid || "",
       };
 
       try {
         await handler.onMessage(incomingMessage);
-      } catch (error) {
+      } catch (err) {
         logger.error(
-          { error, message: incomingMessage },
+          { err, message: incomingMessage },
           "Error processing message",
         );
       }
     });
 
-    sdk.on("error", (error: Error) => {
-      logger.error({ error }, "iMessage SDK error");
+    sdk.on("error", (err: Error) => {
+      logger.error({ err }, "iMessage SDK error");
     });
 
     logger.info({ serverUrl }, "iMessage listener started");
-  } catch (error) {
-    logger.error({ error }, "Failed to start iMessage listener");
-    throw error;
+  } catch (err) {
+    logger.error({ err }, "Failed to start iMessage listener");
+    throw err;
   }
 }
 
@@ -70,8 +70,8 @@ export async function stopListener(): Promise<void> {
       await sdk.close();
       sdk = null;
       logger.info("iMessage listener stopped");
-    } catch (error) {
-      logger.error({ error }, "Error stopping iMessage listener");
+    } catch (err) {
+      logger.error({ err }, "Error stopping iMessage listener");
     }
   }
 }
