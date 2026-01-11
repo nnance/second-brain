@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join, normalize } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { config } from "../config.js";
 import logger from "../logger.js";
 
@@ -57,5 +57,15 @@ export async function vaultRead(
 
 function isValidVaultPath(filepath: string): boolean {
   const normalized = normalize(filepath);
-  return !normalized.startsWith("..") && !normalized.includes("../");
+
+  // Basic checks for path traversal patterns
+  if (normalized.startsWith("..") || normalized.includes("../")) {
+    return false;
+  }
+
+  // Verify the resolved path stays within the vault directory
+  const vaultRoot = resolve(config.vaultPath);
+  const resolvedPath = resolve(config.vaultPath, normalized);
+
+  return resolvedPath.startsWith(`${vaultRoot}/`) || resolvedPath === vaultRoot;
 }

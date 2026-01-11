@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { config } from "../config.js";
 import logger from "../logger.js";
 
@@ -36,6 +36,14 @@ export async function vaultList(
 ): Promise<VaultListResult> {
   try {
     const { folder, tags, limit = 20 } = params;
+
+    // Validate folder path if provided
+    if (folder && !isValidFolderPath(folder)) {
+      return {
+        success: false,
+        error: "Invalid folder path: directory traversal not allowed",
+      };
+    }
 
     const foldersToScan = folder ? [folder] : CONTENT_FOLDERS;
     const allFiles: VaultFileInfo[] = [];
@@ -180,4 +188,9 @@ function extractTitle(content: string): string | null {
   }
 
   return null;
+}
+
+function isValidFolderPath(folder: string): boolean {
+  const normalized = normalize(folder);
+  return !normalized.startsWith("..") && !normalized.includes("../");
 }

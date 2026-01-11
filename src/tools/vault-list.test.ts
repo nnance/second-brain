@@ -228,5 +228,25 @@ Reference content.
       assert.ok(idea.tags.includes("topic/ai"));
       assert.ok(idea.tags.includes("priority/high"));
     });
+
+    it("blocks path traversal attempts", async () => {
+      const result = await vaultList({ folder: "../etc" });
+
+      assert.equal(result.success, false);
+      assert.equal(
+        result.error,
+        "Invalid folder path: directory traversal not allowed",
+      );
+    });
+
+    it("blocks path with embedded traversal", async () => {
+      const result = await vaultList({ folder: "Tasks/../../../etc" });
+
+      assert.equal(result.success, false);
+      assert.equal(
+        result.error,
+        "Invalid folder path: directory traversal not allowed",
+      );
+    });
   });
 });
