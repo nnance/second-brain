@@ -1,1 +1,3 @@
-console.log("second-brain starting...");
+import logger from "./logger.js";
+
+logger.info("second-brain starting...");
