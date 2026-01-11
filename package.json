@@ -9,7 +9,7 @@
     "dev": "tsx src/index.ts",
     "dev:pretty": "tsx src/index.ts | pino-pretty",
     "start": "tsx src/index.ts",
-    "test": "node --import tsx --test 'src/**/*.test.ts'",
+    "test": "VAULT_PATH=/tmp/test-vault node --import tsx --test 'src/**/*.test.ts'",
     "lint": "biome check .",
     "format": "biome format . --write",
     "vault:init": "tsx src/scripts/init-vault.ts"
