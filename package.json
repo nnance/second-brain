@@ -8,6 +8,7 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "dev:pretty": "tsx src/index.ts | pino-pretty",
+    "test": "node --import tsx --test src/**/*.test.ts",
     "lint": "biome check .",
     "format": "biome format . --write"
   },
