@@ -17,7 +17,8 @@ Second Brain is a Personal Knowledge Capture System built as an **autonomous AI 
 - **Linting/Formatting**: Biome
 - **Logging**: Pino
 - **iMessage**: imessage-kit
-- **AI**: Anthropic SDK (Claude)
+- **AI Agent**: Claude Agent SDK (@anthropic-ai/claude-agent-sdk)
+- **Validation**: Zod (for tool schemas)
 - **Storage**: Obsidian vault (markdown files)
 
 ## Common Commands
@@ -44,7 +45,7 @@ npm run vault:init # Initialize Obsidian vault folder structure
 
 ## Architecture
 
-The system follows an **agent-first architecture** where the AI agent is the decision-maker and the application provides tools as capabilities.
+The system follows an **agent-first architecture** using the Claude Agent SDK where the AI agent is the decision-maker and the application provides tools via an in-process MCP server.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -54,7 +55,7 @@ The system follows an **agent-first architecture** where the AI agent is the dec
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    AI Agent (Claude)                    │
+│              Claude Agent SDK (query)                   │
 │                                                         │
 │   System Prompt:                                        │
 │   - Role & personality                                  │
@@ -63,7 +64,7 @@ The system follows an **agent-first architecture** where the AI agent is the dec
 │   - Decision guidelines                                 │
 │   - When to clarify vs store                            │
 │                                                         │
-│   Tools:                                                │
+│   In-Process MCP Server (SDK tools):                    │
 │   - vault_write    (create notes)                       │
 │   - vault_read     (read existing notes)                │
 │   - vault_list     (browse/search notes)                │
@@ -164,16 +165,16 @@ src/
 ├── messages/
 │   └── listener.ts       # iMessage listener
 ├── tools/
-│   ├── vault-write.ts    # vault_write tool
-│   ├── vault-read.ts     # vault_read tool
-│   ├── vault-list.ts     # vault_list tool
-│   ├── log-interaction.ts # log_interaction tool
-│   └── send-message.ts   # send_message tool
+│   ├── vault-write.ts    # vault_write tool handler
+│   ├── vault-read.ts     # vault_read tool handler
+│   ├── vault-list.ts     # vault_list tool handler
+│   ├── log-interaction.ts # log_interaction tool handler
+│   └── send-message.ts   # send_message tool handler
 ├── agent/
-│   ├── client.ts         # Anthropic SDK client
-│   ├── tools.ts          # Tool schema definitions
+│   ├── client.ts         # Claude Agent SDK exports
+│   ├── mcp-server.ts     # In-process MCP server with tools
 │   ├── system-prompt.ts  # Agent system prompt
-│   └── runner.ts         # Agent loop implementation
+│   └── runner.ts         # Agent query runner
 ├── sessions/
 │   ├── store.ts          # Session state management
 │   └── timeout.ts        # Session timeout handling

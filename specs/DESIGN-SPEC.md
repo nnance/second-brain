@@ -10,12 +10,12 @@
 
 ## Overview
 
-A personal system for capturing thoughts, ideas, tasks, and reference material via natural language input. The system is built as an **autonomous AI agent** that uses tools to interact with the Obsidian vault and communicate with the user. All decision-making—categorization, tagging, when to ask clarifying questions, where to store items—is handled by the AI agent through a system prompt, not coded application logic.
+A personal system for capturing thoughts, ideas, tasks, and reference material via natural language input. The system is built as an **autonomous AI agent** using the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) that uses custom MCP tools to interact with the Obsidian vault and communicate with the user. All decision-making—categorization, tagging, when to ask clarifying questions, where to store items—is handled by the AI agent through a system prompt, not coded application logic.
 
 ### Design Principles
 
 - **Agent-first architecture** — Claude makes all decisions; application code provides tools only
-- **Minimal dependencies** — Favor simple, zero-dependency libraries where possible
+- **SDK-powered** — Uses Claude Agent SDK with in-process MCP servers for tool hosting
 - **Single source of truth** — Obsidian vault only; no syncing to external systems
 - **Tags over folders** — Flat folder structure with hierarchical tags for flexible organization
 - **Auditable** — Complete interaction log for every capture event
@@ -25,7 +25,7 @@ A personal system for capturing thoughts, ideas, tasks, and reference material v
 
 ## Architecture
 
-The system follows an **agentic architecture** where the AI agent is the decision-maker and the application provides tools as capabilities.
+The system follows an **agentic architecture** using the Claude Agent SDK where the AI agent is the decision-maker and the application provides tools via an in-process MCP server.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -35,7 +35,7 @@ The system follows an **agentic architecture** where the AI agent is the decisio
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    AI Agent (Claude)                    │
+│              Claude Agent SDK (query)                   │
 │                                                         │
 │   ┌─────────────────────────────────────────────────┐   │
 │   │              System Prompt                      │   │
@@ -47,7 +47,7 @@ The system follows an **agentic architecture** where the AI agent is the decisio
 │   └─────────────────────────────────────────────────┘   │
 │                                                         │
 │   ┌─────────────────────────────────────────────────┐   │
-│   │                   Tools                         │   │
+│   │       In-Process MCP Server (SDK tools)         │   │
 │   │                                                 │   │
 │   │  vault_read      - Read notes from vault        │   │
 │   │  vault_write     - Create/update notes          │   │

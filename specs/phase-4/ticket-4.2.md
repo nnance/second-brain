@@ -1,40 +1,55 @@
-# Ticket 4.2: Tool Schema Definitions
+# Ticket 4.2: MCP Server with Tool Definitions
 
 ## Description
-Define the tool schemas in the Anthropic API format. These schemas describe each tool's name, description, and parameters so Claude can understand when and how to use them. The schemas are passed to the Claude API on each request.
+Create an in-process MCP server using the Claude Agent SDK that hosts all five custom tools. Use the SDK's `tool()` function with Zod schemas for type-safe tool definitions. The MCP server runs in the same process—no subprocess overhead.
 
 ## Acceptance Criteria
-- [ ] Tool definitions module exists at `src/agent/tools.ts`
-- [ ] All five tools defined with JSON Schema parameters
-- [ ] Descriptions are clear and help Claude understand when to use each tool
-- [ ] Parameter schemas match the tool implementations from Phase 2
-- [ ] Exports array of tools for use in API calls
-- [ ] Unit tests verify schema structure
+- [ ] MCP server module exists at `src/agent/mcp-server.ts`
+- [ ] All five tools defined using SDK `tool()` function with Zod schemas
+- [ ] Tool descriptions help Claude understand when to use each tool
+- [ ] Tools call the underlying handlers from Phase 3
+- [ ] MCP server created with `createSdkMcpServer()`
+- [ ] Unit tests verify tool definitions and handler integration
 
 ## Technical Notes
 
-### Tool Schema Format
-Each tool follows the Anthropic tool format:
+### Tool Definition Pattern
+Each tool is defined using the SDK's `tool()` function:
 ```typescript
-interface Tool {
-  name: string;
-  description: string;
-  input_schema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required: string[];
-  };
-}
+import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+
+const myTool = tool(
+  "tool_name",
+  "Description of when and how to use this tool",
+  { /* Zod schema for input */ },
+  async (args) => {
+    // Handler implementation
+    return { content: [{ type: "text", text: "result" }] };
+  }
+);
 ```
 
-### src/agent/tools.ts
+### src/agent/mcp-server.ts
 ```typescript
-import type { Tool } from '@anthropic-ai/sdk/resources/messages';
+import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import { vaultWrite, VaultFolder } from '../tools/vault-write.js';
+import { vaultRead } from '../tools/vault-read.js';
+import { vaultList } from '../tools/vault-list.js';
+import { logInteraction } from '../tools/log-interaction.js';
+import { sendMessage } from '../tools/send-message.js';
+import type { CallToolResult } from '@anthropic-ai/claude-agent-sdk';
 
-export const TOOLS: Tool[] = [
-  {
-    name: 'vault_write',
-    description: `Create a new note in the Obsidian vault. Use this to store captured thoughts, tasks, ideas, or references.
+// Helper to format tool results
+function textResult(text: string): CallToolResult {
+  return { content: [{ type: 'text', text }] };
+}
+
+// vault_write tool
+const vaultWriteTool = tool(
+  'vault_write',
+  `Create a new note in the Obsidian vault. Use this to store captured thoughts, tasks, ideas, or references.
 
 Choose the appropriate folder:
 - Tasks: Actionable items, reminders, follow-ups
@@ -45,145 +60,154 @@ Choose the appropriate folder:
 - Archive: Completed or inactive items
 
 Always assign relevant tags and a confidence score reflecting how certain you are about the categorization.`,
-    input_schema: {
-      type: 'object',
-      properties: {
-        folder: {
-          type: 'string',
-          enum: ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'],
-          description: 'The folder to store the note in',
-        },
-        title: {
-          type: 'string',
-          description: 'A concise, descriptive title for the note',
-        },
-        content: {
-          type: 'string',
-          description: 'The markdown content of the note (without frontmatter)',
-        },
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Tags without # prefix. Use hierarchical format: person/sarah, project/security-audit, topic/security, priority/high, status/waiting',
-        },
-        confidence: {
-          type: 'number',
-          minimum: 0,
-          maximum: 100,
-          description: 'Confidence score (0-100) for the categorization',
-        },
-      },
-      required: ['folder', 'title', 'content', 'tags', 'confidence'],
-    },
-  },
   {
-    name: 'vault_read',
-    description: 'Read an existing note from the vault. Use this to check related notes, verify stored content, or get context about previous captures.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        filepath: {
-          type: 'string',
-          description: 'Path relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"',
-        },
-      },
-      required: ['filepath'],
-    },
+    folder: z.enum(['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'])
+      .describe('The folder to store the note in'),
+    title: z.string().describe('A concise, descriptive title for the note'),
+    content: z.string().describe('The markdown content of the note (without frontmatter)'),
+    tags: z.array(z.string())
+      .describe('Tags without # prefix. Use hierarchical format: person/sarah, project/security-audit'),
+    confidence: z.number().min(0).max(100)
+      .describe('Confidence score (0-100) for the categorization'),
   },
+  async (args) => {
+    const result = await vaultWrite({
+      folder: args.folder as VaultFolder,
+      title: args.title,
+      content: args.content,
+      tags: args.tags,
+      confidence: args.confidence,
+    });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// vault_read tool
+const vaultReadTool = tool(
+  'vault_read',
+  'Read an existing note from the vault. Use this to check related notes, verify stored content, or get context about previous captures.',
   {
-    name: 'vault_list',
-    description: 'List notes in the vault. Use this to find related notes, check for potential duplicates, or browse existing content before creating new notes.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        folder: {
-          type: 'string',
-          description: 'Folder to list (omit for all content folders)',
-        },
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Filter by tags (all must match)',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results (default 20)',
-        },
-      },
-      required: [],
-    },
+    filepath: z.string()
+      .describe('Path relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"'),
   },
+  async (args) => {
+    const result = await vaultRead({ filepath: args.filepath });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// vault_list tool
+const vaultListTool = tool(
+  'vault_list',
+  'List notes in the vault. Use this to find related notes, check for potential duplicates, or browse existing content before creating new notes.',
   {
-    name: 'log_interaction',
-    description: `Record this interaction in the daily log. ALWAYS call this tool to maintain an audit trail. Include:
+    folder: z.string().optional()
+      .describe('Folder to list (omit for all content folders)'),
+    tags: z.array(z.string()).optional()
+      .describe('Filter by tags (all must match)'),
+    limit: z.number().optional()
+      .describe('Maximum number of results (default 20)'),
+  },
+  async (args) => {
+    const result = await vaultList({
+      folder: args.folder,
+      tags: args.tags,
+      limit: args.limit,
+    });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// log_interaction tool
+const logInteractionTool = tool(
+  'log_interaction',
+  `Record this interaction in the daily log. ALWAYS call this tool to maintain an audit trail. Include:
 - The user's original input
 - Your categorization decision and reasoning
 - Tags assigned
 - Where the note was stored
 - Any clarification questions asked`,
-    input_schema: {
-      type: 'object',
-      properties: {
-        input: {
-          type: 'string',
-          description: "User's original message",
-        },
-        category: {
-          type: 'string',
-          description: 'Assigned category (Tasks, Ideas, Reference, Projects, Inbox)',
-        },
-        confidence: {
-          type: 'number',
-          description: 'Confidence score (0-100)',
-        },
-        reasoning: {
-          type: 'string',
-          description: 'Brief explanation of categorization decision',
-        },
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Tags assigned to the note',
-        },
-        stored_path: {
-          type: 'string',
-          description: 'Where the note was stored',
-        },
-        clarification: {
-          type: 'string',
-          description: 'Clarification question asked (if any)',
-        },
-        user_response: {
-          type: 'string',
-          description: "User's response to clarification (if any)",
-        },
-      },
-      required: ['input'],
-    },
-  },
   {
-    name: 'send_message',
-    description: `Send a message to the user via iMessage. Use this to:
+    input: z.string().describe("User's original message"),
+    category: z.string().optional()
+      .describe('Assigned category (Tasks, Ideas, Reference, Projects, Inbox)'),
+    confidence: z.number().optional()
+      .describe('Confidence score (0-100)'),
+    reasoning: z.string().optional()
+      .describe('Brief explanation of categorization decision'),
+    tags: z.array(z.string()).optional()
+      .describe('Tags assigned to the note'),
+    stored_path: z.string().optional()
+      .describe('Where the note was stored'),
+    clarification: z.string().optional()
+      .describe('Clarification question asked (if any)'),
+    user_response: z.string().optional()
+      .describe("User's response to clarification (if any)"),
+  },
+  async (args) => {
+    const result = await logInteraction({
+      input: args.input,
+      category: args.category,
+      confidence: args.confidence,
+      reasoning: args.reasoning,
+      tags: args.tags,
+      stored_path: args.stored_path,
+      clarification: args.clarification,
+      user_response: args.user_response,
+    });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// send_message tool - requires recipient to be injected at runtime
+// This is a factory function that creates the tool with a specific recipient
+export function createSendMessageTool(recipient: string) {
+  return tool(
+    'send_message',
+    `Send a message to the user via iMessage. Use this to:
 - Confirm successful storage: "Got it! Saved as a task to follow up with Sarah."
 - Ask clarifying questions: "Is this a link to save or a concept to research?"
 - Provide feedback: "I've added this to your Reference folder with tags #topic/security."
 
 Keep messages concise and helpful.`,
-    input_schema: {
-      type: 'object',
-      properties: {
-        message: {
-          type: 'string',
-          description: 'The message to send to the user',
-        },
-      },
-      required: ['message'],
+    {
+      message: z.string().describe('The message to send to the user'),
     },
-  },
+    async (args) => {
+      const result = await sendMessage({
+        recipient,
+        message: args.message,
+      });
+      return textResult(JSON.stringify(result));
+    }
+  );
+}
+
+// Create the base MCP server (without send_message, which needs recipient)
+export const baseTools = [
+  vaultWriteTool,
+  vaultReadTool,
+  vaultListTool,
+  logInteractionTool,
 ];
 
-// Export individual tool names for type safety
-export type ToolName = 'vault_write' | 'vault_read' | 'vault_list' | 'log_interaction' | 'send_message';
+// Factory to create MCP server with recipient-specific send_message tool
+export function createVaultMcpServer(recipient: string) {
+  return createSdkMcpServer({
+    name: 'vault-tools',
+    version: '1.0.0',
+    tools: [...baseTools, createSendMessageTool(recipient)],
+  });
+}
+
+// Tool names for allowedTools configuration
+export const TOOL_NAMES = [
+  'mcp__vault-tools__vault_write',
+  'mcp__vault-tools__vault_read',
+  'mcp__vault-tools__vault_list',
+  'mcp__vault-tools__log_interaction',
+  'mcp__vault-tools__send_message',
+] as const;
 ```
 
 ### Tool Description Guidelines
@@ -192,16 +216,16 @@ export type ToolName = 'vault_write' | 'vault_read' | 'vault_list' | 'log_intera
 - Mention constraints and expectations
 - Guide Claude toward good decisions
 
-### Unit Tests: src/agent/tools.test.ts
+### Unit Tests: src/agent/mcp-server.test.ts
 Test cases:
-- All tools have name, description, input_schema
-- Required fields are specified correctly
-- Property types match expected formats
-- Enum values are correct for vault_write folder
+- `createVaultMcpServer` returns an MCP server
+- Server has all 5 tools registered
+- Tool names match expected format
+- Integration test: call tool handlers through MCP server
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, tools tests pass
-3. File `src/agent/tools.ts` exists
-4. Tests exist in `src/agent/tools.test.ts`
-5. TOOLS array contains exactly 5 tools
+2. Run `npm test` — exits 0, mcp-server tests pass
+3. File `src/agent/mcp-server.ts` exists
+4. Tests exist in `src/agent/mcp-server.test.ts`
+5. `TOOL_NAMES` array contains 5 tool names with `mcp__vault-tools__` prefix

@@ -1,15 +1,15 @@
-# Ticket 4.1: Anthropic SDK Integration
+# Ticket 4.1: Claude Agent SDK Integration
 
 ## Description
-Add the Anthropic SDK as a dependency and create a client module for interacting with Claude. Configure authentication and model selection via environment variables. This establishes the foundation for the AI agent.
+Add the Claude Agent SDK as a dependency and configure it for agent interactions. The SDK provides the `query()` function for running agent conversations and `createSdkMcpServer()` for hosting custom tools. Configure authentication and model selection via environment variables.
 
 ## Acceptance Criteria
-- [ ] Anthropic SDK installed as a dependency
-- [ ] Claude client module exists at `src/agent/client.ts`
+- [ ] Claude Agent SDK installed as a dependency
+- [ ] Zod installed for tool schema definitions
+- [ ] SDK client module exists at `src/agent/client.ts`
 - [ ] API key read from `ANTHROPIC_API_KEY` environment variable
 - [ ] Model configurable via `CLAUDE_MODEL` environment variable
 - [ ] Default model is `claude-sonnet-4-20250514`
-- [ ] Client supports tool-use API format
 - [ ] Application fails fast if API key is missing
 - [ ] `.env.example` updated with new variables
 
@@ -17,7 +17,7 @@ Add the Anthropic SDK as a dependency and create a client module for interacting
 
 ### Dependencies
 ```bash
-npm install @anthropic-ai/sdk
+npm install @anthropic-ai/claude-agent-sdk zod
 ```
 
 ### Environment Variables
@@ -37,22 +37,22 @@ Validate `ANTHROPIC_API_KEY` is present.
 
 ### src/agent/client.ts
 ```typescript
-import Anthropic from '@anthropic-ai/sdk';
+import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../config.js';
 import logger from '../logger.js';
 
-// Export the client for use in agent runner
-export const anthropic = new Anthropic({
-  apiKey: config.anthropicApiKey,
-});
+// Re-export SDK functions for use in other modules
+export { query, tool, createSdkMcpServer };
 
+// Export model configuration
 export const MODEL = config.claudeModel;
 
-// Type exports for tool definitions
-export type { Tool, ToolUseBlock, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
-export type { MessageParam, ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+// Validate API key is present (SDK reads from ANTHROPIC_API_KEY automatically)
+if (!config.anthropicApiKey) {
+  throw new Error('ANTHROPIC_API_KEY environment variable is required');
+}
 
-logger.info({ model: MODEL }, 'Anthropic client initialized');
+logger.info({ model: MODEL }, 'Claude Agent SDK initialized');
 ```
 
 ### .env.example Update
@@ -66,7 +66,7 @@ CLAUDE_MODEL=claude-sonnet-4-20250514
 
 ### Unit Tests: src/agent/client.test.ts
 Test cases:
-- Client module exports `anthropic` and `MODEL`
+- Client module exports `query`, `tool`, `createSdkMcpServer`, and `MODEL`
 - Config validation catches missing API key
 - Model defaults to expected value
 

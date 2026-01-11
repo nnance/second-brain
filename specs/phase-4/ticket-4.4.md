@@ -1,54 +1,37 @@
-# Ticket 4.4: Agent Runner with Tool Dispatch
+# Ticket 4.4: Agent Query Runner
 
 ## Description
-Create the agent runner that implements the agentic loop—sending messages to Claude with tools, handling tool_use responses by dispatching to the appropriate tool handlers, and returning results until Claude completes its response. This is the core of the agent architecture.
+Create the agent runner that uses the Claude Agent SDK's `query()` function to process user messages. The runner streams through query results, handling the agent's tool calls automatically through the MCP server. This replaces the need for a manual agent loop—the SDK handles tool dispatch internally.
 
 ## Acceptance Criteria
 - [ ] Agent runner module exists at `src/agent/runner.ts`
-- [ ] Implements the agentic loop (send → tool_use → dispatch → tool_result → repeat)
-- [ ] Dispatches to correct tool handler based on tool name
-- [ ] Handles multiple sequential tool calls in one turn
-- [ ] Returns final text response from agent
-- [ ] Provides conversation context (recipient) to tools that need it
+- [ ] Uses SDK's `query()` function with MCP server
+- [ ] Streams through query results to handle messages
+- [ ] Returns success/failure status with metadata
+- [ ] Provides conversation context (recipient) for send_message tool
 - [ ] Logs each step for debugging
-- [ ] Handles errors gracefully (tool failures don't crash the loop)
-- [ ] Unit tests with mocked Anthropic client
+- [ ] Handles errors gracefully
+- [ ] Unit tests with mocked query responses
 
 ## Technical Notes
 
-### Agent Loop Flow
+### Agent Runner Flow
 ```
-1. Build messages array (system + conversation history + new user message)
-2. Call Claude API with tools
-3. If response contains tool_use:
-   a. Execute tool with params
-   b. Add tool_result to messages
-   c. Call Claude API again
-   d. Repeat until no more tool_use
-4. Return final assistant message
+1. Create MCP server with recipient-specific send_message tool
+2. Call query() with system prompt, user message, and MCP server
+3. Stream through results:
+   - Handle 'result' messages (success/error)
+   - Optionally log tool calls for debugging
+4. Return final result
 ```
 
 ### src/agent/runner.ts
 ```typescript
-import { anthropic, MODEL } from './client.js';
-import { TOOLS, ToolName } from './tools.js';
+import { query } from './client.js';
+import { createVaultMcpServer, TOOL_NAMES } from './mcp-server.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
-import { vaultWrite } from '../tools/vault-write.js';
-import { vaultRead } from '../tools/vault-read.js';
-import { vaultList } from '../tools/vault-list.js';
-import { logInteraction } from '../tools/log-interaction.js';
-import { sendMessage } from '../tools/send-message.js';
+import { MODEL } from './client.js';
 import logger from '../logger.js';
-import type { MessageParam, ContentBlock, ToolUseBlock } from '@anthropic-ai/sdk/resources/messages';
-
-// Tool dispatch map
-const toolHandlers: Record<ToolName, (params: unknown) => Promise<unknown>> = {
-  vault_write: (params) => vaultWrite(params as Parameters<typeof vaultWrite>[0]),
-  vault_read: (params) => vaultRead(params as Parameters<typeof vaultRead>[0]),
-  vault_list: (params) => vaultList(params as Parameters<typeof vaultList>[0]),
-  log_interaction: (params) => logInteraction(params as Parameters<typeof logInteraction>[0]),
-  send_message: (params) => sendMessage(params as Parameters<typeof sendMessage>[0]),
-};
 
 export interface AgentContext {
   recipient: string;  // For send_message tool - the user's phone/iMessage ID
@@ -56,121 +39,64 @@ export interface AgentContext {
 
 export interface AgentResult {
   success: boolean;
-  toolsCalled: string[];
   error?: string;
 }
 
 export async function runAgent(
   userMessage: string,
-  context: AgentContext,
-  conversationHistory: MessageParam[] = []
+  context: AgentContext
 ): Promise<AgentResult> {
-  const toolsCalled: string[] = [];
-
   try {
-    // Build initial messages
-    const messages: MessageParam[] = [
-      ...conversationHistory,
-      { role: 'user', content: userMessage },
-    ];
+    // Create MCP server with recipient-specific send_message tool
+    const mcpServer = createVaultMcpServer(context.recipient);
 
-    logger.info({ messageCount: messages.length }, 'Starting agent run');
+    logger.info({ recipient: context.recipient }, 'Starting agent run');
 
-    // Agent loop
-    let continueLoop = true;
-    while (continueLoop) {
-      const response = await anthropic.messages.create({
+    // Run the agent query
+    for await (const message of query({
+      prompt: userMessage,
+      options: {
         model: MODEL,
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        tools: TOOLS,
-        messages,
-      });
+        systemPrompt: SYSTEM_PROMPT,
+        mcpServers: {
+          'vault-tools': mcpServer,
+        },
+        allowedTools: [...TOOL_NAMES],
+        maxTurns: 10,
+      },
+    })) {
+      // Log message types for debugging
+      logger.debug({ type: message.type }, 'Query message received');
 
-      logger.debug({
-        stopReason: response.stop_reason,
-        contentBlocks: response.content.length,
-      }, 'Received Claude response');
-
-      // Process response content
-      const assistantContent: ContentBlock[] = [];
-      const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
-
-      for (const block of response.content) {
-        assistantContent.push(block);
-
-        if (block.type === 'tool_use') {
-          const toolResult = await dispatchTool(block, context);
-          toolsCalled.push(block.name);
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify(toolResult),
-          });
+      // Handle result messages
+      if (message.type === 'result') {
+        if (message.subtype === 'success') {
+          logger.info('Agent run completed successfully');
+          return { success: true };
+        } else if (message.subtype === 'error') {
+          const errorMsg = message.error?.message || 'Unknown error';
+          logger.error({ error: errorMsg }, 'Agent run failed');
+          return { success: false, error: errorMsg };
         }
       }
 
-      // Add assistant message to conversation
-      messages.push({ role: 'assistant', content: assistantContent });
-
-      // If there were tool calls, add results and continue loop
-      if (toolResults.length > 0) {
-        messages.push({ role: 'user', content: toolResults });
-      } else {
-        // No tool calls, we're done
-        continueLoop = false;
-      }
-
-      // Check stop reason
-      if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
-        continueLoop = false;
+      // Log tool use for debugging (optional)
+      if (message.type === 'assistant' && message.message?.content) {
+        for (const block of message.message.content) {
+          if (block.type === 'tool_use') {
+            logger.debug({ tool: block.name }, 'Tool called');
+          }
+        }
       }
     }
 
-    logger.info({ toolsCalled }, 'Agent run complete');
+    // Should not reach here, but handle gracefully
+    logger.warn('Query stream ended without result message');
+    return { success: true };
 
-    return {
-      success: true,
-      toolsCalled,
-    };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ error }, 'Agent run failed');
-    return {
-      success: false,
-      toolsCalled,
-      error: message,
-    };
-  }
-}
-
-async function dispatchTool(
-  toolUse: ToolUseBlock,
-  context: AgentContext
-): Promise<unknown> {
-  const { name, input, id } = toolUse;
-
-  logger.debug({ tool: name, input }, 'Dispatching tool');
-
-  const handler = toolHandlers[name as ToolName];
-  if (!handler) {
-    logger.error({ tool: name }, 'Unknown tool');
-    return { success: false, error: `Unknown tool: ${name}` };
-  }
-
-  try {
-    // Inject recipient for send_message tool
-    let params = input;
-    if (name === 'send_message') {
-      params = { ...(input as object), recipient: context.recipient };
-    }
-
-    const result = await handler(params);
-    logger.debug({ tool: name, result }, 'Tool completed');
-    return result;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ tool: name, error }, 'Tool failed');
+    logger.error({ error }, 'Agent run threw exception');
     return { success: false, error: message };
   }
 }
@@ -178,37 +104,44 @@ async function dispatchTool(
 
 ### Key Design Decisions
 
-1. **Stateless runner** — Each call is independent; conversation history passed in
-2. **Context injection** — Recipient is injected into send_message params
-3. **Error isolation** — Tool failures return error objects, don't crash the loop
-4. **Full logging** — Every step is logged for debugging
+1. **SDK handles tool dispatch** — No need to manually dispatch tools; MCP server handles it
+2. **Recipient injection** — MCP server created per-request with recipient baked into send_message tool
+3. **Streaming results** — Process query results as a stream for efficiency
+4. **Error isolation** — Catch and return errors, don't throw
+
+### Why No Manual Tool Loop?
+
+The Claude Agent SDK's `query()` function handles the entire tool-use loop internally:
+- Sends messages to Claude with tools defined
+- Automatically dispatches tool calls to the MCP server
+- Returns tool results to Claude
+- Continues until Claude completes
+
+This eliminates the need for manual tool dispatch code.
 
 ### Unit Tests: src/agent/runner.test.ts
 Test cases:
-- Dispatches to correct tool handler
-- Handles multiple sequential tool calls
-- Injects recipient into send_message
-- Returns error on unknown tool
-- Continues loop on tool_use, stops on end_turn
-- Returns list of tools called
+- Returns success on successful query completion
+- Returns error on query failure
+- Creates MCP server with correct recipient
+- Handles exceptions gracefully
+- Logs appropriate messages
 
 ### Mocking Strategy
-Mock the Anthropic client to return predictable tool_use and text responses:
+Mock the `query` function to return predictable results:
 ```typescript
-// Mock a simple tool call followed by end_turn
-const mockResponse1 = {
-  stop_reason: 'tool_use',
-  content: [{
-    type: 'tool_use',
-    id: 'call_1',
-    name: 'vault_write',
-    input: { folder: 'Tasks', title: 'Test', content: 'Test', tags: [], confidence: 90 },
-  }],
+// Mock a successful run
+const mockSuccessResult = {
+  type: 'result',
+  subtype: 'success',
+  result: 'Done',
 };
 
-const mockResponse2 = {
-  stop_reason: 'end_turn',
-  content: [{ type: 'text', text: 'Done!' }],
+// Mock a failure
+const mockErrorResult = {
+  type: 'result',
+  subtype: 'error',
+  error: { message: 'API error' },
 };
 ```
 
@@ -217,4 +150,4 @@ const mockResponse2 = {
 2. Run `npm test` — exits 0, runner tests pass
 3. File `src/agent/runner.ts` exists
 4. Tests exist in `src/agent/runner.test.ts`
-5. Tool dispatch works for all 5 tools
+5. Runner uses SDK `query()` function (not manual loop)

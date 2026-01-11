@@ -41,7 +41,7 @@ Phase N+1 (after approval)
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Agent Runner (Anthropic SDK)               │
+│              Claude Agent SDK (query)                   │
 │                                                         │
 │   ┌─────────────────────────────────────────────────┐   │
 │   │              System Prompt                      │   │
@@ -51,7 +51,7 @@ Phase N+1 (after approval)
 │   └─────────────────────────────────────────────────┘   │
 │                                                         │
 │   ┌─────────────────────────────────────────────────┐   │
-│   │                 Tool Handlers                   │   │
+│   │       In-Process MCP Server (SDK tools)         │   │
 │   │  vault_write | vault_read | vault_list          │   │
 │   │  log_interaction | send_message                 │   │
 │   └─────────────────────────────────────────────────┘   │
@@ -91,10 +91,10 @@ specs/
 │   └── ticket-3.5.md           # Implement send_message tool
 ├── phase-4/
 │   ├── README.md
-│   ├── ticket-4.1.md           # Anthropic SDK integration
-│   ├── ticket-4.2.md           # Tool schema definitions
+│   ├── ticket-4.1.md           # Claude Agent SDK integration
+│   ├── ticket-4.2.md           # MCP server with tool definitions
 │   ├── ticket-4.3.md           # System prompt creation
-│   ├── ticket-4.4.md           # Agent runner with tool dispatch
+│   ├── ticket-4.4.md           # Agent query runner
 │   └── ticket-4.5.md           # Wire iMessage to agent
 └── phase-5/
     ├── README.md
@@ -115,7 +115,8 @@ specs/
 | Linting/Formatting | Biome |
 | Logging | Pino |
 | iMessage | imessage-kit |
-| AI | Anthropic SDK (Claude) |
+| AI Agent | Claude Agent SDK (@anthropic-ai/claude-agent-sdk) |
+| Validation | Zod (for tool schemas) |
 | Storage | Obsidian vault (markdown files) |
 
 ## Environment Variables
