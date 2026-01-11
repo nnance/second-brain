@@ -43,20 +43,40 @@ Reference/2026-01-10_zero-trust-architecture-article.md
 - An Obsidian vault
 - Anthropic API key
 
-### iMessage Setup
-
-1. Sign into Messages.app with a dedicated iMessage account
-2. Grant Full Disk Access permission to Terminal (or your IDE):
-   - System Settings → Privacy & Security → Full Disk Access
-   - Add your terminal app (Terminal, iTerm, Warp) or IDE (VS Code, Cursor)
-
 ## Installation
+
+### 1. Clone and install dependencies
 
 ```bash
 git clone <repo-url>
 cd second-brain
 npm install
 ```
+
+### 2. Grant Full Disk Access (required)
+
+The app reads directly from the macOS Messages database, which requires Full Disk Access permission.
+
+1. Open **System Settings** → **Privacy & Security** → **Full Disk Access**
+2. Click the **+** button
+3. Add the app you'll run `npm start` from:
+   - **Terminal**: `/Applications/Utilities/Terminal.app`
+   - **VS Code**: `/Applications/Visual Studio Code.app`
+   - **Cursor**: `/Applications/Cursor.app`
+   - **iTerm**: `/Applications/iTerm.app`
+4. **Restart your terminal/IDE completely** (quit and reopen)
+
+Verify the permission is working:
+
+```bash
+ls ~/Library/Messages/chat.db
+```
+
+If you see the file path, you're good. If you get "Operation not permitted", the permission hasn't been granted or the app needs to be restarted.
+
+### 3. Sign into Messages.app
+
+Sign into Messages.app with a dedicated iMessage account that will receive your capture messages.
 
 ## Configuration
 
