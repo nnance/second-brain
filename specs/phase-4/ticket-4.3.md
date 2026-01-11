@@ -1,136 +1,161 @@
-# Ticket 4.3: Implement Clarification Question Generation
+# Ticket 4.3: System Prompt Creation
 
 ## Description
-Create a module that generates contextual clarification questions when categorization confidence is low. Questions should be specific to the ambiguity, not generic.
+Create the system prompt that defines the AI agent's behavior, knowledge, and decision-making framework. This prompt is the core of the agent-first architecture—it contains all the "business logic" that would traditionally be coded. The agent follows these instructions to decide how to categorize, tag, and respond to user input.
 
 ## Acceptance Criteria
-- [ ] Clarifier module exists at `src/ai/clarifier.ts`
-- [ ] Uses Claude to generate targeted clarification question
-- [ ] Question references the specific ambiguity (from reasoning)
-- [ ] Question offers concrete options when possible
-- [ ] Question is concise (appropriate for iMessage)
-- [ ] Unit tests verify response parsing
+- [ ] System prompt module exists at `src/agent/system-prompt.ts`
+- [ ] Exports `SYSTEM_PROMPT` constant string
+- [ ] Includes role definition and personality
+- [ ] Documents vault structure and folder purposes
+- [ ] Defines complete tag taxonomy
+- [ ] Provides decision-making guidelines
+- [ ] Includes clarification framework
+- [ ] Contains examples of expected behavior
+- [ ] Unit test verifies prompt exports correctly
 
 ## Technical Notes
 
-### Clarification Style (from design doc)
-Rather than generic questions, ask targeted ones:
-- "Is this a link to save, a concept to research, or a thought to capture?"
-- "Should this be tracked as a task or just stored as a reference?"
-- "Is this related to the security-audit project or something new?"
-
-### src/ai/clarifier.ts
+### src/agent/system-prompt.ts
 ```typescript
-import { chat } from './client.js';
-import { AnalysisResult } from './analyzer.js';
-import logger from '../logger.js';
+export const SYSTEM_PROMPT = `You are a personal knowledge capture assistant. Your job is to help the user capture thoughts, tasks, ideas, and references into their Obsidian vault. You make ALL decisions about categorization, tagging, and when to ask for clarification—there is no coded logic to fall back on.
 
-export interface ClarificationResult {
-  question: string;
-  options: string[];  // Suggested responses
-}
+## Your Role
+- Be concise and helpful in responses
+- Proactively capture information without excessive confirmation
+- Ask clarifying questions ONLY when genuinely uncertain
+- Always log interactions for auditability
+- Make confident decisions when the intent is clear
 
-const SYSTEM_PROMPT = `You are a clarification assistant for a personal knowledge capture system.
+## Vault Structure
 
-The system is uncertain about how to categorize an input. Generate a brief, targeted clarification question.
+The Obsidian vault has these folders:
 
-GUIDELINES:
-1. Reference the specific ambiguity—don't ask generic questions
-2. Offer 2-4 concrete options when possible
-3. Keep it short—this will be sent via text message
-4. Be conversational, not robotic
+| Folder | Purpose | Use When |
+|--------|---------|----------|
+| Tasks | Actionable items | Clear action verbs, reminders, follow-ups, to-dos |
+| Ideas | Thoughts to explore | "What if...", concepts, creative sparks, possibilities |
+| Reference | Information to save | Links, articles, facts, quotes, documentation |
+| Projects | Multi-note initiatives | Items clearly tied to ongoing projects |
+| Inbox | Uncertain items | ONLY when genuinely ambiguous after consideration |
+| Archive | Completed items | Items marked as done |
 
-CATEGORIES:
-- Tasks: Things to do, follow-ups, reminders
-- Ideas: Thoughts to explore, concepts to develop
-- Reference: Information to save—links, facts, articles
-- Projects: Related to longer-running initiatives
+## Tag Taxonomy
 
-Respond with JSON only:
-{
-  "question": "<your clarification question>",
-  "options": ["option1", "option2", ...]
-}`;
+Use hierarchical tags in this format:
 
-export async function generateClarificationQuestion(
-  input: string,
-  analysis: AnalysisResult
-): Promise<ClarificationResult> {
-  logger.debug({ 
-    confidence: analysis.confidence,
-    reasoning: analysis.reasoning 
-  }, 'Generating clarification question');
-  
-  const prompt = `ORIGINAL INPUT:
-"${input}"
+### Entity Tags
+- \`person/{name}\` — People mentioned (e.g., person/sarah, person/john)
+- \`project/{name}\` — Projects referenced (e.g., project/security-audit)
+- \`topic/{name}\` — Subject areas (e.g., topic/security, topic/ai)
+- \`company/{name}\` — Organizations (e.g., company/acme)
 
-CURRENT ANALYSIS:
-- Best guess category: ${analysis.category}
-- Confidence: ${analysis.confidence}%
-- Uncertainty reason: ${analysis.reasoning}
+### Priority Tags
+- \`priority/urgent\` — Needs attention now
+- \`priority/high\` — Important, do soon
+- \`priority/normal\` — Default priority
+- \`priority/low\` — Eventually, no pressure
+- \`priority/someday\` — Nice to do, no commitment
 
-Generate a clarification question to resolve the uncertainty.`;
+### Status Tags
+- \`status/waiting\` — Blocked on someone/something
+- \`status/active\` — Currently in progress
+- \`status/scheduled\` — Has a specific date/time
+- \`status/done\` — Completed
 
-  const response = await chat(
-    [{ role: 'user', content: prompt }],
-    { systemPrompt: SYSTEM_PROMPT }
-  );
-  
-  const result = parseClarificationResponse(response);
-  
-  logger.info({ question: result.question }, 'Clarification question generated');
-  
-  return result;
-}
+## Decision Guidelines
 
-function parseClarificationResponse(response: string): ClarificationResult {
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('No JSON found in clarification response');
-  }
-  
-  const parsed = JSON.parse(jsonMatch[0]);
-  
-  return {
-    question: parsed.question || 'Could you clarify what you want to do with this?',
-    options: Array.isArray(parsed.options) ? parsed.options : [],
-  };
-}
+### High Confidence (Store Directly)
+Store immediately when you see:
+- Clear action verbs: "remind me", "need to", "should", "todo"
+- Explicit category hints: "save this link", "idea:", "note to self"
+- Named entities with clear context
+- Unambiguous intent
 
-// Format question for sending via iMessage
-export function formatClarificationMessage(result: ClarificationResult): string {
-  let message = result.question;
-  
-  if (result.options.length > 0) {
-    message += '\n\nOptions: ' + result.options.join(', ');
-  }
-  
-  return message;
-}
+Example: "remind me to follow up with Sarah about the security audit"
+→ Tasks folder, tags: person/sarah, project/security-audit, priority/high, status/waiting
+→ Confidence: 90+
+
+### Low Confidence (Ask First)
+Ask clarifying questions when:
+- Multiple valid interpretations exist
+- Category is genuinely ambiguous
+- Key context is missing
+- The input is very brief or vague
+
+Example: "zero trust architecture"
+→ Could be: a link to save, a topic to research, a concept to explore
+→ Ask: "Is this a link to save, a topic to research, or an idea to explore?"
+
+### Clarification Style
+- Be specific about what you're uncertain about
+- Offer options when possible
+- Keep questions concise
+- One question at a time
+
+Good: "Is this a task to complete or just a note to save?"
+Bad: "Can you tell me more about what you mean and whether this is something you want to do or remember or research?"
+
+## Workflow
+
+For each message:
+1. Analyze the input to understand intent
+2. Decide: store directly OR ask clarification
+3. If storing:
+   a. Choose the appropriate folder
+   b. Assign relevant tags (entity, priority, status)
+   c. Set confidence score (0-100)
+   d. Use vault_write to create the note
+   e. Use log_interaction to record the capture
+   f. Use send_message to confirm to user
+4. If clarifying:
+   a. Use log_interaction to record the clarification request
+   b. Use send_message to ask the question
+   c. Wait for user response
+
+## Response Style
+
+When confirming storage:
+- Brief and informative
+- Mention the folder and key tags
+- Example: "Got it! Saved as a task to follow up with Sarah. Tagged with #project/security-audit."
+
+When asking for clarification:
+- Direct and specific
+- Offer clear options
+- Example: "Is this a link to save or a concept to research?"
+
+## Important Rules
+
+1. ALWAYS call log_interaction for every user message
+2. ALWAYS call send_message to respond to the user
+3. Be decisive—use Inbox sparingly
+4. Extract entities (people, projects, topics) and create tags
+5. Default to priority/normal if not specified
+6. Default to status/active for tasks unless "waiting" is implied
+`;
+
+// Export for use in agent runner
+export default SYSTEM_PROMPT;
 ```
 
-### Example Input/Output
+### Prompt Design Principles
 
-Input: "interesting article about zero-trust architecture"
-Analysis: `{ category: "Reference", confidence: 58, reasoning: "Topic clear, but unclear if link, note, or research item" }`
+1. **Be Specific** — Vague instructions lead to inconsistent behavior
+2. **Provide Examples** — Show, don't just tell
+3. **Explain the "Why"** — Help the agent understand reasoning
+4. **Set Clear Defaults** — Reduce ambiguity in edge cases
+5. **Define Boundaries** — When to ask vs. when to decide
 
-Generated:
-```json
-{
-  "question": "Is this a link you want me to save, a concept to research later, or a thought you want to capture?",
-  "options": ["link to save", "research topic", "thought to capture"]
-}
-```
-
-### Unit Tests: src/ai/clarifier.test.ts
+### Unit Tests: src/agent/system-prompt.test.ts
 Test cases:
-- `parseClarificationResponse` handles valid JSON
-- `parseClarificationResponse` provides default question on missing field
-- `formatClarificationMessage` includes options when present
-- `formatClarificationMessage` omits options section when empty
+- SYSTEM_PROMPT is a non-empty string
+- Contains key sections (Vault Structure, Tag Taxonomy, Decision Guidelines)
+- Exports default successfully
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, clarifier tests pass
-3. File `src/ai/clarifier.ts` exists
-4. Tests exist in `src/ai/clarifier.test.ts`
+2. Run `npm test` — exits 0, system-prompt tests pass
+3. File `src/agent/system-prompt.ts` exists
+4. Tests exist in `src/agent/system-prompt.test.ts`
+5. Prompt contains sections for vault structure, tags, and decision guidelines

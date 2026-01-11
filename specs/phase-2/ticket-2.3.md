@@ -63,19 +63,19 @@ export interface WriteNoteResult {
 
 export async function writeNote(options: WriteNoteOptions): Promise<WriteNoteResult> {
   const { folder, title, body, metadata } = options;
-  
+
   const slug = generateSlug(title);
   const datePrefix = formatDatePrefix(metadata.created);
   const baseFileName = `${datePrefix}_${slug}.md`;
-  
+
   const folderPath = join(config.vaultPath, folder);
   const { fileName, filePath } = await resolveUniqueFileName(folderPath, baseFileName);
-  
+
   const content = formatNoteContent(title, body, metadata);
   await writeFile(filePath, content, 'utf-8');
-  
+
   logger.info({ filePath, folder }, 'Note written');
-  
+
   return { filePath, fileName };
 }
 
@@ -104,7 +104,7 @@ function formatNoteContent(title: string, body: string, metadata: NoteMetadata):
     '',
     body,
   ].join('\n');
-  
+
   return frontmatter;
 }
 
@@ -112,14 +112,14 @@ async function resolveUniqueFileName(folderPath: string, baseFileName: string): 
   let fileName = baseFileName;
   let filePath = join(folderPath, fileName);
   let suffix = 0;
-  
+
   while (await fileExists(filePath)) {
     suffix++;
     const nameParts = baseFileName.replace('.md', '');
     fileName = `${nameParts}-${suffix}.md`;
     filePath = join(folderPath, fileName);
   }
-  
+
   return { fileName, filePath };
 }
 

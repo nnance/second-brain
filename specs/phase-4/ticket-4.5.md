@@ -1,173 +1,135 @@
-# Ticket 4.5: Implement Clarification Timeout
+# Ticket 4.5: Wire iMessage to Agent
 
 ## Description
-Implement a timeout mechanism for pending clarifications. If a clarification is not responded to within the configured time, store the item to `Inbox/` with a note that it was unresolved.
+Connect the iMessage listener from Phase 1 to the agent runner. When a message arrives, pass it to the agent for processing. This completes the basic end-to-end flow: message → agent → vault storage → reply.
 
 ## Acceptance Criteria
-- [ ] Timeout duration configurable via `CLARIFICATION_TIMEOUT_MS` env var
-- [ ] Default timeout is 1 hour (3600000 ms)
-- [ ] Timeout checker runs periodically
-- [ ] Timed-out items are stored to `Inbox/` folder
-- [ ] Timed-out items have metadata indicating unresolved clarification
-- [ ] Interaction log notes the timeout
-- [ ] Pending clarification is cleared after timeout
+- [ ] Main entry point wires iMessage listener to agent runner
+- [ ] Each message spawns an agent run with the message text
+- [ ] Agent context includes sender as recipient
+- [ ] Errors in agent don't crash the listener
+- [ ] Logging shows end-to-end flow
+- [ ] Graceful shutdown works correctly
 
 ## Technical Notes
 
-### Environment Variable
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CLARIFICATION_TIMEOUT_MS` | No | `3600000` | Timeout in milliseconds (default 1 hour) |
-
-### src/config.ts Update
+### Updated src/index.ts
 ```typescript
-clarificationTimeoutMs: number;
+import logger from './logger.js';
+import { config } from './config.js';
+import { startListener, stopListener } from './messages/listener.js';
+import { runAgent } from './agent/runner.js';
 
-// In loadConfig():
-clarificationTimeoutMs: Number(process.env.CLARIFICATION_TIMEOUT_MS) || 3600000,
-```
+logger.info({
+  vaultPath: config.vaultPath,
+  model: config.claudeModel,
+}, 'second-brain starting...');
 
-### src/state/timeout-checker.ts
-```typescript
-import { 
-  getAllPendingClarifications, 
-  clearPendingClarification,
-  PendingClarification 
-} from './pending-clarifications.js';
-import { writeNote } from '../vault/writer.js';
-import { writeInteractionLog } from '../vault/interaction-log.js';
-import { config } from '../config.js';
-import logger from '../logger.js';
+startListener({
+  onMessage: async (message) => {
+    const { text, sender } = message;
 
-let timeoutInterval: NodeJS.Timeout | null = null;
+    logger.info({
+      event: 'message_received',
+      sender,
+      textLength: text.length,
+    }, 'Processing incoming message');
 
-export function startTimeoutChecker(): void {
-  if (timeoutInterval) {
-    logger.warn('Timeout checker already running');
-    return;
-  }
-  
-  // Check every minute
-  const CHECK_INTERVAL_MS = 60 * 1000;
-  
-  timeoutInterval = setInterval(() => {
-    checkForTimeouts();
-  }, CHECK_INTERVAL_MS);
-  
-  logger.info({ 
-    checkIntervalMs: CHECK_INTERVAL_MS,
-    timeoutMs: config.clarificationTimeoutMs 
-  }, 'Timeout checker started');
-}
+    try {
+      const result = await runAgent(text, { recipient: sender });
 
-export function stopTimeoutChecker(): void {
-  if (timeoutInterval) {
-    clearInterval(timeoutInterval);
-    timeoutInterval = null;
-    logger.info('Timeout checker stopped');
-  }
-}
-
-async function checkForTimeouts(): Promise<void> {
-  const now = Date.now();
-  const pending = getAllPendingClarifications();
-  
-  for (const clarification of pending) {
-    const age = now - clarification.createdAt.getTime();
-    
-    if (age >= config.clarificationTimeoutMs) {
-      await handleTimeout(clarification);
+      if (result.success) {
+        logger.info({
+          event: 'agent_complete',
+          sender,
+          toolsCalled: result.toolsCalled,
+        }, 'Agent completed successfully');
+      } else {
+        logger.error({
+          event: 'agent_failed',
+          sender,
+          error: result.error,
+          toolsCalled: result.toolsCalled,
+        }, 'Agent failed');
+      }
+    } catch (error) {
+      logger.error({
+        event: 'agent_error',
+        sender,
+        error,
+      }, 'Unexpected error in agent');
     }
-  }
-}
-
-async function handleTimeout(clarification: PendingClarification): Promise<void> {
-  logger.info({ 
-    senderId: clarification.senderId,
-    originalInput: clarification.originalInput.slice(0, 50) 
-  }, 'Clarification timed out');
-  
-  const timestamp = new Date();
-  
-  try {
-    // Store to Inbox with timeout metadata
-    const result = await writeNote({
-      folder: 'Inbox',
-      title: clarification.analysis.suggestedTitle || clarification.originalInput.slice(0, 50),
-      body: formatTimedOutNoteBody(clarification),
-      metadata: {
-        created: clarification.createdAt,
-        source: 'imessage',
-        confidence: clarification.analysis.confidence,
-        tags: [...clarification.analysis.tags, 'status/unresolved'],
-      },
-    });
-    
-    // Log the timeout
-    await writeInteractionLog({
-      timestamp,
-      input: clarification.originalInput,
-      storedPath: `Inbox/${result.fileName}`,
-      category: 'Inbox',
-      confidence: clarification.analysis.confidence,
-      reasoning: `Clarification timed out. Original best guess: ${clarification.analysis.category}`,
-      tags: [...clarification.analysis.tags, 'status/unresolved'],
-    });
-    
-    // Clear the pending clarification
-    clearPendingClarification(clarification.senderId);
-    
-  } catch (error) {
-    logger.error({ 
-      senderId: clarification.senderId, 
-      error 
-    }, 'Failed to handle clarification timeout');
-  }
-}
-
-function formatTimedOutNoteBody(clarification: PendingClarification): string {
-  return `${clarification.originalInput}
-
----
-
-*Clarification timed out*
-
-- Original category guess: ${clarification.analysis.category} (${clarification.analysis.confidence}%)
-- Clarification asked: "${clarification.clarificationQuestion}"
-- No response received within timeout period`;
-}
-```
-
-### Integration with Main App (src/index.ts)
-```typescript
-import { startTimeoutChecker, stopTimeoutChecker } from './state/timeout-checker.js';
-
-// At startup:
-startTimeoutChecker();
-
-// In shutdown handlers:
-process.on('SIGINT', () => {
-  stopTimeoutChecker();
-  // ... other cleanup
+  },
 });
+
+// Graceful shutdown
+const shutdown = () => {
+  logger.info('Shutting down...');
+  stopListener();
+  process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+logger.info('Listening for messages...');
 ```
 
-### .env.example Update
-```bash
-# Optional: Clarification timeout in milliseconds (default: 3600000 = 1 hour)
-CLARIFICATION_TIMEOUT_MS=3600000
+### Message Flow
+```
+iMessage received
+    │
+    ├── Log: message_received
+    │
+    ▼
+runAgent(text, { recipient: sender })
+    │
+    ├── Agent analyzes message
+    ├── Agent calls tools (vault_write, log_interaction, send_message)
+    ├── Agent returns result
+    │
+    ▼
+Log: agent_complete or agent_failed
 ```
 
-### Unit Tests: src/state/timeout-checker.test.ts
-Test cases:
-- `checkForTimeouts` identifies expired clarifications
-- `handleTimeout` stores to Inbox
-- `handleTimeout` adds status/unresolved tag
-- `handleTimeout` clears pending clarification
+### Error Handling
+- Wrap agent call in try/catch
+- Log errors but don't crash
+- Listener continues running after individual failures
+- Agent errors are isolated per message
+
+### Important Notes
+
+1. **No conversation state yet** — Each message is processed independently in Phase 4. Phase 5 adds conversation context for multi-turn clarifications.
+
+2. **Synchronous processing** — Messages are processed one at a time. For high volume, consider queuing (future enhancement).
+
+3. **Agent makes all decisions** — The code here just passes the message through. All categorization, tagging, and response logic is in the agent.
+
+### Integration Test
+Manual testing procedure:
+1. Set environment variables (VAULT_PATH, ANTHROPIC_API_KEY)
+2. Initialize vault: `npm run vault:init`
+3. Start the app: `npm start`
+4. Send a text: "remind me to call mom tomorrow"
+5. Verify:
+   - File created in `Tasks/` folder
+   - Tags include appropriate metadata
+   - Interaction logged in `_system/logs/`
+   - Reply received via iMessage
+
+### Unit Tests
+The wiring code is thin and primarily integration. Consider:
+- Verifying the message handler calls runAgent with correct params
+- Verifying error handling doesn't propagate exceptions
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, timeout checker tests pass
-3. File `src/state/timeout-checker.ts` exists
-4. `.env.example` includes `CLARIFICATION_TIMEOUT_MS`
-5. With short timeout (e.g., 5000ms), pending clarification times out and file appears in `Inbox/`
+2. Run `npm test` — exits 0
+3. src/index.ts imports and uses runAgent
+4. With env vars set and vault initialized:
+   - Run `npm start`
+   - Send a text to the dedicated iMessage account
+   - Verify file appears in vault with correct frontmatter
+   - Verify interaction log entry exists
+   - Verify reply received (if send_message tool works)

@@ -43,7 +43,7 @@ logger.info({ vaultPath: config.vaultPath }, 'second-brain starting...');
 startListener({
   onMessage: async (message) => {
     const timestamp = new Date();
-    
+
     try {
       // Write note to Inbox
       const result = await writeNote({
@@ -57,20 +57,20 @@ startListener({
           tags: [],
         },
       });
-      
+
       // Write interaction log
       await writeInteractionLog({
         timestamp,
         input: message.text,
         storedPath: `Inbox/${result.fileName}`,
       });
-      
+
       logger.info({
         event: 'message_captured',
         sender: message.sender,
         filePath: result.filePath,
       }, 'Message captured successfully');
-      
+
     } catch (error) {
       logger.error({
         event: 'capture_failed',
@@ -100,7 +100,7 @@ For Phase 2, use a simple approach:
 - Take first 50 characters of the message
 - This becomes both the title and the slug basis
 
-Phase 3 will improve this with Claude analyzing the content.
+Phase 3 will refactor this to use agent tools for intelligent categorization.
 
 ### Error Handling
 - Wrap the entire capture flow in try/catch

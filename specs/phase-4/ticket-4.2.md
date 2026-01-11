@@ -1,108 +1,231 @@
-# Ticket 4.2: Implement Conversation State Management
+# Ticket 4.2: MCP Server with Tool Definitions
 
 ## Description
-Create a module to track pending clarifications. When Claude asks a clarifying question, the state manager holds the original input and analysis until a response is received or timeout occurs.
+Create an in-process MCP server using the Claude Agent SDK that hosts all five custom tools. Use the SDK's `tool()` function with Zod schemas for type-safe tool definitions. The MCP server runs in the same process—no subprocess overhead.
 
 ## Acceptance Criteria
-- [ ] State manager module exists at `src/state/pending-clarifications.ts`
-- [ ] Can store pending clarification with original input, analysis, and timestamp
-- [ ] Can retrieve pending clarification by sender ID
-- [ ] Can clear/resolve pending clarification
-- [ ] Single pending clarification per sender (new one replaces old)
-- [ ] Exposes list of all pending clarifications (for timeout checking)
-- [ ] Unit tests verify state operations
+- [ ] MCP server module exists at `src/agent/mcp-server.ts`
+- [ ] All five tools defined using SDK `tool()` function with Zod schemas
+- [ ] Tool descriptions help Claude understand when to use each tool
+- [ ] Tools call the underlying handlers from Phase 3
+- [ ] MCP server created with `createSdkMcpServer()`
+- [ ] Unit tests verify tool definitions and handler integration
 
 ## Technical Notes
 
-### Why Sender-Based State
-Each sender (phone number) can have at most one pending clarification. If they send multiple messages, we need to decide how to handle them (addressed in ticket 4.4).
-
-### src/state/pending-clarifications.ts
+### Tool Definition Pattern
+Each tool is defined using the SDK's `tool()` function:
 ```typescript
-import { AnalysisResult } from '../ai/analyzer.js';
-import logger from '../logger.js';
+import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 
-export interface PendingClarification {
-  senderId: string;
-  originalInput: string;
-  analysis: AnalysisResult;
-  clarificationQuestion: string;
-  createdAt: Date;
-}
-
-// In-memory store (single process, no persistence needed)
-const pendingClarifications = new Map<string, PendingClarification>();
-
-export function setPendingClarification(clarification: PendingClarification): void {
-  const existing = pendingClarifications.get(clarification.senderId);
-  if (existing) {
-    logger.warn({ senderId: clarification.senderId }, 'Replacing existing pending clarification');
+const myTool = tool(
+  "tool_name",
+  "Description of when and how to use this tool",
+  { /* Zod schema for input */ },
+  async (args) => {
+    // Handler implementation
+    return { content: [{ type: "text", text: "result" }] };
   }
-  
-  pendingClarifications.set(clarification.senderId, clarification);
-  logger.debug({ senderId: clarification.senderId }, 'Pending clarification stored');
-}
-
-export function getPendingClarification(senderId: string): PendingClarification | undefined {
-  return pendingClarifications.get(senderId);
-}
-
-export function hasPendingClarification(senderId: string): boolean {
-  return pendingClarifications.has(senderId);
-}
-
-export function clearPendingClarification(senderId: string): boolean {
-  const existed = pendingClarifications.delete(senderId);
-  if (existed) {
-    logger.debug({ senderId }, 'Pending clarification cleared');
-  }
-  return existed;
-}
-
-export function getAllPendingClarifications(): PendingClarification[] {
-  return Array.from(pendingClarifications.values());
-}
-
-export function getPendingClarificationCount(): number {
-  return pendingClarifications.size;
-}
-
-// For testing
-export function clearAllPendingClarifications(): void {
-  pendingClarifications.clear();
-  logger.debug('All pending clarifications cleared');
-}
+);
 ```
 
-### State Structure
+### src/agent/mcp-server.ts
 ```typescript
-{
-  senderId: "+15551234567",
-  originalInput: "interesting article about zero-trust",
-  analysis: { /* AnalysisResult from ticket 3.6 */ },
-  clarificationQuestion: "Is this a link to save or a concept to research?",
-  createdAt: Date
+import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import { vaultWrite, VaultFolder } from '../tools/vault-write.js';
+import { vaultRead } from '../tools/vault-read.js';
+import { vaultList } from '../tools/vault-list.js';
+import { logInteraction } from '../tools/log-interaction.js';
+import { sendMessage } from '../tools/send-message.js';
+import type { CallToolResult } from '@anthropic-ai/claude-agent-sdk';
+
+// Helper to format tool results
+function textResult(text: string): CallToolResult {
+  return { content: [{ type: 'text', text }] };
 }
+
+// vault_write tool
+const vaultWriteTool = tool(
+  'vault_write',
+  `Create a new note in the Obsidian vault. Use this to store captured thoughts, tasks, ideas, or references.
+
+Choose the appropriate folder:
+- Tasks: Actionable items, reminders, follow-ups
+- Ideas: Thoughts to explore, creative sparks, concepts
+- Reference: Links, articles, facts to save
+- Projects: Items related to multi-step initiatives
+- Inbox: Only if genuinely uncertain about categorization
+- Archive: Completed or inactive items
+
+Always assign relevant tags and a confidence score reflecting how certain you are about the categorization.`,
+  {
+    folder: z.enum(['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'])
+      .describe('The folder to store the note in'),
+    title: z.string().describe('A concise, descriptive title for the note'),
+    content: z.string().describe('The markdown content of the note (without frontmatter)'),
+    tags: z.array(z.string())
+      .describe('Tags without # prefix. Use hierarchical format: person/sarah, project/security-audit'),
+    confidence: z.number().min(0).max(100)
+      .describe('Confidence score (0-100) for the categorization'),
+  },
+  async (args) => {
+    const result = await vaultWrite({
+      folder: args.folder as VaultFolder,
+      title: args.title,
+      content: args.content,
+      tags: args.tags,
+      confidence: args.confidence,
+    });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// vault_read tool
+const vaultReadTool = tool(
+  'vault_read',
+  'Read an existing note from the vault. Use this to check related notes, verify stored content, or get context about previous captures.',
+  {
+    filepath: z.string()
+      .describe('Path relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"'),
+  },
+  async (args) => {
+    const result = await vaultRead({ filepath: args.filepath });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// vault_list tool
+const vaultListTool = tool(
+  'vault_list',
+  'List notes in the vault. Use this to find related notes, check for potential duplicates, or browse existing content before creating new notes.',
+  {
+    folder: z.string().optional()
+      .describe('Folder to list (omit for all content folders)'),
+    tags: z.array(z.string()).optional()
+      .describe('Filter by tags (all must match)'),
+    limit: z.number().optional()
+      .describe('Maximum number of results (default 20)'),
+  },
+  async (args) => {
+    const result = await vaultList({
+      folder: args.folder,
+      tags: args.tags,
+      limit: args.limit,
+    });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// log_interaction tool
+const logInteractionTool = tool(
+  'log_interaction',
+  `Record this interaction in the daily log. ALWAYS call this tool to maintain an audit trail. Include:
+- The user's original input
+- Your categorization decision and reasoning
+- Tags assigned
+- Where the note was stored
+- Any clarification questions asked`,
+  {
+    input: z.string().describe("User's original message"),
+    category: z.string().optional()
+      .describe('Assigned category (Tasks, Ideas, Reference, Projects, Inbox)'),
+    confidence: z.number().optional()
+      .describe('Confidence score (0-100)'),
+    reasoning: z.string().optional()
+      .describe('Brief explanation of categorization decision'),
+    tags: z.array(z.string()).optional()
+      .describe('Tags assigned to the note'),
+    stored_path: z.string().optional()
+      .describe('Where the note was stored'),
+    clarification: z.string().optional()
+      .describe('Clarification question asked (if any)'),
+    user_response: z.string().optional()
+      .describe("User's response to clarification (if any)"),
+  },
+  async (args) => {
+    const result = await logInteraction({
+      input: args.input,
+      category: args.category,
+      confidence: args.confidence,
+      reasoning: args.reasoning,
+      tags: args.tags,
+      stored_path: args.stored_path,
+      clarification: args.clarification,
+      user_response: args.user_response,
+    });
+    return textResult(JSON.stringify(result));
+  }
+);
+
+// send_message tool - requires recipient to be injected at runtime
+// This is a factory function that creates the tool with a specific recipient
+export function createSendMessageTool(recipient: string) {
+  return tool(
+    'send_message',
+    `Send a message to the user via iMessage. Use this to:
+- Confirm successful storage: "Got it! Saved as a task to follow up with Sarah."
+- Ask clarifying questions: "Is this a link to save or a concept to research?"
+- Provide feedback: "I've added this to your Reference folder with tags #topic/security."
+
+Keep messages concise and helpful.`,
+    {
+      message: z.string().describe('The message to send to the user'),
+    },
+    async (args) => {
+      const result = await sendMessage({
+        recipient,
+        message: args.message,
+      });
+      return textResult(JSON.stringify(result));
+    }
+  );
+}
+
+// Create the base MCP server (without send_message, which needs recipient)
+export const baseTools = [
+  vaultWriteTool,
+  vaultReadTool,
+  vaultListTool,
+  logInteractionTool,
+];
+
+// Factory to create MCP server with recipient-specific send_message tool
+export function createVaultMcpServer(recipient: string) {
+  return createSdkMcpServer({
+    name: 'vault-tools',
+    version: '1.0.0',
+    tools: [...baseTools, createSendMessageTool(recipient)],
+  });
+}
+
+// Tool names for allowedTools configuration
+export const TOOL_NAMES = [
+  'mcp__vault-tools__vault_write',
+  'mcp__vault-tools__vault_read',
+  'mcp__vault-tools__vault_list',
+  'mcp__vault-tools__log_interaction',
+  'mcp__vault-tools__send_message',
+] as const;
 ```
 
-### Memory Considerations
-- In-memory storage is appropriate here since:
-  - Pending clarifications are short-lived
-  - Process restart clears state (acceptable for MVP)
-  - Volume is low (personal use)
+### Tool Description Guidelines
+- Describe WHEN to use the tool, not just WHAT it does
+- Include examples of appropriate usage
+- Mention constraints and expectations
+- Guide Claude toward good decisions
 
-### Unit Tests: src/state/pending-clarifications.test.ts
+### Unit Tests: src/agent/mcp-server.test.ts
 Test cases:
-- `setPendingClarification` stores clarification
-- `getPendingClarification` retrieves by sender
-- `getPendingClarification` returns undefined for unknown sender
-- `hasPendingClarification` returns correct boolean
-- `clearPendingClarification` removes clarification
-- `getAllPendingClarifications` returns all pending
-- Setting new clarification for same sender replaces old one
+- `createVaultMcpServer` returns an MCP server
+- Server has all 5 tools registered
+- Tool names match expected format
+- Integration test: call tool handlers through MCP server
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, state tests pass
-3. File `src/state/pending-clarifications.ts` exists
-4. Tests exist in `src/state/pending-clarifications.test.ts`
+2. Run `npm test` — exits 0, mcp-server tests pass
+3. File `src/agent/mcp-server.ts` exists
+4. Tests exist in `src/agent/mcp-server.test.ts`
+5. `TOOL_NAMES` array contains 5 tool names with `mcp__vault-tools__` prefix

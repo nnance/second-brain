@@ -57,16 +57,16 @@ export interface LogEntry {
 export async function writeInteractionLog(entry: LogEntry): Promise<void> {
   const logFileName = formatLogFileName(entry.timestamp);
   const logFilePath = join(config.vaultPath, '_system', 'logs', logFileName);
-  
+
   const entryContent = formatLogEntry(entry);
-  
+
   if (await fileExists(logFilePath)) {
     await appendFile(logFilePath, entryContent, 'utf-8');
   } else {
     const header = formatLogHeader(entry.timestamp);
     await writeFile(logFilePath, header + entryContent, 'utf-8');
   }
-  
+
   logger.debug({ logFilePath }, 'Interaction logged');
 }
 
@@ -81,7 +81,7 @@ function formatLogHeader(date: Date): string {
 
 function formatLogEntry(entry: LogEntry): string {
   const timeStr = entry.timestamp.toISOString().split('T')[1].split('.')[0];
-  
+
   return `
 ---
 
@@ -104,7 +104,7 @@ async function fileExists(path: string): Promise<boolean> {
 ```
 
 ### Phase 3 Extension Note
-In Phase 3, this will be extended to include:
+In Phase 3, this will be refactored into agent tools with extended fields for:
 - Category
 - Confidence score
 - Reasoning

@@ -1,140 +1,164 @@
-# Ticket 3.4: Implement Tag Generation
+# Ticket 3.4: Refactor Interaction Log to log_interaction Tool
 
 ## Description
-Create a module that uses Claude to generate relevant tags for an input. Claude should prefer existing tags when they match, but can create new tags following the established taxonomy when needed.
+Refactor the existing `src/vault/interaction-log.ts` from Phase 2 into an agent-callable tool at `src/tools/log-interaction.ts`. The tool accepts structured parameters with full categorization details and returns structured results.
 
 ## Acceptance Criteria
-- [ ] Tagger module exists at `src/ai/tagger.ts`
-- [ ] Receives input text and list of existing tags
-- [ ] Returns array of tags (existing or new)
-- [ ] New tags follow hierarchical format (e.g., `person/name`, `topic/subject`)
-- [ ] System prompt explains taxonomy and encourages reuse
-- [ ] Unit tests verify response parsing
+- [ ] Tool exists at `src/tools/log-interaction.ts`
+- [ ] Accepts full interaction details: input, category, confidence, reasoning, tags, stored path, clarification info
+- [ ] Writes to `_system/logs/YYYY-MM-DD.md` based on current date
+- [ ] Creates file with header if it doesn't exist
+- [ ] Appends log entries to existing file
+- [ ] Returns structured result with success status and log path
+- [ ] Never throws—returns error in result object
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### Tag Taxonomy (from design doc)
-```
-Entity Tags:
-  person/{name}     — People
-  project/{name}    — Projects
-  topic/{name}      — Subject areas
-  company/{name}    — Organizations
-
-Status Tags:
-  status/waiting    — Blocked on someone/something
-  status/active     — In progress
-  status/scheduled  — Has specific date/time
-  status/done       — Completed
-```
-
-Note: Priority tags are handled in ticket 3.5.
-
-### src/ai/tagger.ts
+### Tool Interface
 ```typescript
-import { chat } from './client.js';
-import { getExistingTags } from '../vault/tags.js';
+// src/tools/log-interaction.ts
+
+export interface LogInteractionParams {
+  input: string;                // User's original message
+  category?: string;            // Assigned category (Tasks, Ideas, etc.)
+  confidence?: number;          // Confidence score (0-100)
+  reasoning?: string;           // Why this categorization was chosen
+  tags?: string[];              // Assigned tags
+  stored_path?: string;         // Where the note was stored
+  clarification?: string;       // Clarification question asked (if any)
+  user_response?: string;       // User's response to clarification (if any)
+}
+
+export interface LogInteractionResult {
+  success: boolean;
+  log_path?: string;            // Path to log file
+  error?: string;
+}
+
+export async function logInteraction(params: LogInteractionParams): Promise<LogInteractionResult> {
+  // Implementation
+}
+```
+
+### Key Differences from Phase 2
+| Phase 2 | Phase 3 Tool |
+|---------|--------------|
+| Only input and storedPath | Full categorization metadata |
+| Simple format | Rich format with reasoning |
+| Throws on error | Returns error result |
+
+### Log Entry Format (Enhanced)
+```markdown
+---
+
+## 14:32:00
+
+**Input:** "remind me to follow up with Sarah about the security audit"
+
+**Categorization:**
+- Category: Tasks
+- Confidence: 92%
+- Reasoning: Clear action verb, named person, specific topic
+
+**Tags assigned:**
+- person/sarah
+- project/security-audit
+- priority/high
+- status/waiting
+
+**Stored:** `Tasks/2026-01-10_follow-up-sarah-security-audit.md`
+
+---
+```
+
+### Log Entry Format (with clarification)
+```markdown
+---
+
+## 14:45:12
+
+**Input:** "interesting article about zero-trust architecture"
+
+**Clarification requested:** "Is this a link to save or a concept to research?"
+
+**User response:** "link to save"
+
+**Categorization:**
+- Category: Reference
+- Confidence: 95%
+- Reasoning: User clarified this is a link to save
+
+**Tags assigned:**
+- topic/security
+- topic/zero-trust
+
+**Stored:** `Reference/2026-01-10_zero-trust-architecture-article.md`
+
+---
+```
+
+### Reusing Phase 2 Logic
+The existing `src/vault/interaction-log.ts` has:
+- `formatLogFileName()` — Generate date-based filename
+- `formatLogHeader()` — Create daily log header
+- File existence checking and append logic
+
+These can be adapted for the enhanced format.
+
+### Implementation Skeleton
+```typescript
+import { appendFile, writeFile, access } from 'node:fs/promises';
+import { join } from 'node:path';
+import { config } from '../config.js';
 import logger from '../logger.js';
 
-export interface TaggingResult {
-  tags: string[];
-  newTags: string[];  // Tags that didn't exist before
-}
+export async function logInteraction(params: LogInteractionParams): Promise<LogInteractionResult> {
+  try {
+    const now = new Date();
+    const logFileName = `${now.toISOString().split('T')[0]}.md`;
+    const logFilePath = join(config.vaultPath, '_system', 'logs', logFileName);
 
-const SYSTEM_PROMPT = `You are a tagging assistant for a personal knowledge capture system.
+    const entryContent = formatLogEntry(params, now);
 
-Your job is to assign relevant tags to the input. Follow these rules:
+    if (await fileExists(logFilePath)) {
+      await appendFile(logFilePath, entryContent, 'utf-8');
+    } else {
+      const header = formatLogHeader(now);
+      await writeFile(logFilePath, header + entryContent, 'utf-8');
+    }
 
-TAG TAXONOMY:
-- person/{name} — People mentioned (lowercase, hyphenated: person/sarah-connor)
-- project/{name} — Projects mentioned (lowercase, hyphenated: project/security-audit)
-- topic/{name} — Subject areas (lowercase, hyphenated: topic/machine-learning)
-- company/{name} — Organizations (lowercase, hyphenated: company/anthropic)
-- status/waiting|active|scheduled|done — Current status if clear
+    const relativePath = `_system/logs/${logFileName}`;
+    logger.debug({ logFilePath }, 'log_interaction: Entry written');
 
-RULES:
-1. REUSE existing tags when they match (check the provided list)
-2. Only create new tags if no existing tag fits
-3. New tags must follow the taxonomy format
-4. Be conservative—only add tags that are clearly relevant
-5. Typically assign 1-5 tags per item
-
-Respond with JSON only:
-{
-  "tags": ["tag1", "tag2"],
-  "reasoning": "<brief explanation>"
-}`;
-
-export async function generateTags(input: string): Promise<TaggingResult> {
-  const existingTags = await getExistingTags();
-  
-  logger.debug({ 
-    inputLength: input.length, 
-    existingTagCount: existingTags.length 
-  }, 'Generating tags');
-  
-  const prompt = `EXISTING TAGS:\n${existingTags.join('\n') || '(none yet)'}\n\nINPUT:\n${input}`;
-  
-  const response = await chat(
-    [{ role: 'user', content: prompt }],
-    { systemPrompt: SYSTEM_PROMPT }
-  );
-  
-  const result = parseTaggingResponse(response, existingTags);
-  
-  logger.info({
-    tagCount: result.tags.length,
-    newTagCount: result.newTags.length,
-  }, 'Tagging complete');
-  
-  return result;
-}
-
-function parseTaggingResponse(response: string, existingTags: string[]): TaggingResult {
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('No JSON found in tagging response');
+    return {
+      success: true,
+      log_path: relativePath,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error, params }, 'log_interaction: Failed');
+    return {
+      success: false,
+      error: message,
+    };
   }
-  
-  const parsed = JSON.parse(jsonMatch[0]);
-  
-  if (!Array.isArray(parsed.tags)) {
-    throw new Error('Tags must be an array');
-  }
-  
-  const tags: string[] = parsed.tags.map((t: unknown) => String(t).toLowerCase());
-  const existingSet = new Set(existingTags.map(t => t.toLowerCase()));
-  
-  const newTags = tags.filter(t => !existingSet.has(t));
-  
-  return { tags, newTags };
 }
 ```
 
-### Example Input/Output
-Input: "remind me to follow up with Sarah about the security audit"
-
-Existing tags: ["person/john", "project/onboarding", "topic/security"]
-
-Output:
-```json
-{
-  "tags": ["person/sarah", "project/security-audit", "topic/security"],
-  "newTags": ["person/sarah", "project/security-audit"]
-}
-```
-
-Note: `topic/security` was reused from existing tags.
-
-### Unit Tests: src/ai/tagger.test.ts
+### Unit Tests: src/tools/log-interaction.test.ts
 Test cases:
-- `parseTaggingResponse` handles valid JSON
-- `parseTaggingResponse` identifies new vs existing tags
-- `parseTaggingResponse` handles empty tag list
-- `parseTaggingResponse` lowercases all tags
+- Creates new log file with header
+- Appends to existing log file
+- Formats entry with all fields
+- Formats entry with minimal fields (input only)
+- Formats entry with clarification
+- Generates correct filename from date
+- Returns success with log path
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, tagger tests pass
-3. File `src/ai/tagger.ts` exists
-4. Tests exist in `src/ai/tagger.test.ts`
+2. Run `npm test` — exits 0, log-interaction tests pass
+3. File `src/tools/log-interaction.ts` exists
+4. Tests exist in `src/tools/log-interaction.test.ts`
+5. Manual test: call function, verify log file created with correct format

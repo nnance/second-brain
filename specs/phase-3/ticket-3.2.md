@@ -1,157 +1,107 @@
-# Ticket 3.2: Implement Category Analysis
+# Ticket 3.2: Implement vault_read Tool
 
 ## Description
-
-Create a categorization module that uses Claude to analyze input text and determine which category it belongs to. Returns a structured result with category, confidence score, and reasoning.
+Create the `vault_read` tool that enables the AI agent to read existing notes from the Obsidian vault. This allows the agent to check for related notes, read previous context, or verify stored content.
 
 ## Acceptance Criteria
-
-- [ ] Categorizer module exists at `src/ai/categorizer.ts`
-- [ ] Analyzes input and returns one of: Tasks, Ideas, Reference, Projects, Inbox
-- [ ] Returns confidence score (0-100)
-- [ ] Returns reasoning explanation
-- [ ] Uses structured output (JSON) from Claude
-- [ ] System prompt clearly defines each category
-- [ ] Unit tests verify response parsing
+- [ ] Tool exists at `src/tools/vault-read.ts`
+- [ ] Accepts filepath relative to vault root
+- [ ] Returns file content including frontmatter
+- [ ] Handles file not found gracefully
+- [ ] Returns structured result with success status
+- [ ] Never throws—returns error in result object
+- [ ] Validates path to prevent directory traversal
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### Categories (Fixed Set)
-
-| Category    | Description                                          |
-| ----------- | ---------------------------------------------------- |
-| `Tasks`     | Actionable items—things to do or follow up on        |
-| `Ideas`     | Thoughts, concepts, things to explore or develop     |
-| `Reference` | Information to retrieve later—links, articles, facts |
-| `Projects`  | Items related to longer-running initiatives          |
-| `Inbox`     | Unclear or doesn't fit other categories              |
-
-### src/ai/categorizer.ts
-
+### Tool Interface
 ```typescript
-import { chat } from "./client.js";
-import logger from "../logger.js";
+// src/tools/vault-read.ts
 
-export type Category = "Tasks" | "Ideas" | "Reference" | "Projects" | "Inbox";
-
-export interface CategorizationResult {
-  category: Category;
-  confidence: number;
-  reasoning: string;
-  suggestedTitle: string;
+export interface VaultReadParams {
+  filepath: string;  // Path relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"
 }
 
-const SYSTEM_PROMPT = `You are a categorization assistant for a personal knowledge capture system.
-
-Analyze the input and categorize it into ONE of these categories:
-- Tasks: Actionable items, things to do, follow-ups, reminders
-- Ideas: Thoughts, concepts, things to explore or develop, creative sparks
-- Reference: Information to save for later—links, articles, facts, quotes
-- Projects: Items clearly related to longer-running initiatives or multi-step efforts
-- Inbox: When genuinely unclear or doesn't fit other categories
-
-Respond with JSON only:
-{
-  "category": "Tasks|Ideas|Reference|Projects|Inbox",
-  "confidence": <0-100>,
-  "reasoning": "<brief explanation>",
-  "suggestedTitle": "<concise title for the note>"
+export interface VaultReadResult {
+  success: boolean;
+  content?: string;
+  error?: string;
 }
 
-Be decisive. Only use Inbox if truly ambiguous. Confidence should reflect how clearly the input matches the category.`;
-
-export async function categorize(input: string): Promise<CategorizationResult> {
-  logger.debug({ inputLength: input.length }, "Categorizing input");
-
-  const response = await chat([{ role: "user", content: input }], {
-    systemPrompt: SYSTEM_PROMPT,
-  });
-
-  const result = parseCategorizationResponse(response);
-
-  logger.info(
-    {
-      category: result.category,
-      confidence: result.confidence,
-    },
-    "Categorization complete"
-  );
-
-  return result;
-}
-
-function parseCategorizationResponse(response: string): CategorizationResult {
-  // Extract JSON from response (handle potential markdown code blocks)
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("No JSON found in categorization response");
-  }
-
-  const parsed = JSON.parse(jsonMatch[0]);
-
-  // Validate category
-  const validCategories: Category[] = [
-    "Tasks",
-    "Ideas",
-    "Reference",
-    "Projects",
-    "Inbox",
-  ];
-  if (!validCategories.includes(parsed.category)) {
-    throw new Error(`Invalid category: ${parsed.category}`);
-  }
-
-  // Validate confidence
-  const confidence = Number(parsed.confidence);
-  if (isNaN(confidence) || confidence < 0 || confidence > 100) {
-    throw new Error(`Invalid confidence: ${parsed.confidence}`);
-  }
-
-  return {
-    category: parsed.category,
-    confidence,
-    reasoning: parsed.reasoning || "",
-    suggestedTitle: parsed.suggestedTitle || "",
-  };
+export async function vaultRead(params: VaultReadParams): Promise<VaultReadResult> {
+  // Implementation
 }
 ```
 
-### Example Inputs/Outputs
+### Implementation
+```typescript
+import { readFile } from 'node:fs/promises';
+import { join, normalize } from 'node:path';
+import { config } from '../config.js';
+import logger from '../logger.js';
 
-Input: "remind me to follow up with Sarah about the security audit"
+export async function vaultRead(params: VaultReadParams): Promise<VaultReadResult> {
+  try {
+    const { filepath } = params;
 
-```json
-{
-  "category": "Tasks",
-  "confidence": 95,
-  "reasoning": "Clear action verb 'remind', specific person and topic",
-  "suggestedTitle": "Follow up with Sarah about security audit"
+    // Validate path (prevent directory traversal)
+    if (!isValidVaultPath(filepath)) {
+      return {
+        success: false,
+        error: 'Invalid path: directory traversal not allowed',
+      };
+    }
+
+    const fullPath = join(config.vaultPath, filepath);
+    const content = await readFile(fullPath, 'utf-8');
+
+    logger.debug({ filepath }, 'vault_read: Note read');
+
+    return {
+      success: true,
+      content,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      logger.debug({ filepath: params.filepath }, 'vault_read: File not found');
+      return {
+        success: false,
+        error: `File not found: ${params.filepath}`,
+      };
+    }
+
+    logger.error({ error, params }, 'vault_read: Failed');
+    return {
+      success: false,
+      error: message,
+    };
+  }
+}
+
+function isValidVaultPath(filepath: string): boolean {
+  const normalized = normalize(filepath);
+  return !normalized.startsWith('..') && !normalized.includes('../');
 }
 ```
 
-Input: "what if we used a graph database for the knowledge system"
+### Security Consideration
+- Validate that filepath doesn't escape vault directory (no `../` traversal)
+- Normalize path before validation
 
-```json
-{
-  "category": "Ideas",
-  "confidence": 88,
-  "reasoning": "Exploratory 'what if' framing, conceptual suggestion",
-  "suggestedTitle": "Graph database for knowledge system"
-}
-```
-
-### Unit Tests: src/ai/categorizer.test.ts
-
+### Unit Tests: src/tools/vault-read.test.ts
 Test cases:
-
-- `parseCategorizationResponse` handles valid JSON
-- `parseCategorizationResponse` handles JSON in code blocks
-- `parseCategorizationResponse` throws on invalid category
-- `parseCategorizationResponse` throws on missing JSON
+- Reads existing file successfully
+- Returns content with frontmatter intact
+- Returns error for non-existent file
+- Blocks path traversal attempts (`../etc/passwd`)
+- Handles files in nested folders (`_system/logs/2026-01-10.md`)
 
 ## Done Conditions (for Claude Code to verify)
-
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, categorizer tests pass
-3. File `src/ai/categorizer.ts` exists
-4. Tests exist in `src/ai/categorizer.test.ts`
+2. Run `npm test` — exits 0, vault-read tests pass
+3. File `src/tools/vault-read.ts` exists
+4. Tests exist in `src/tools/vault-read.test.ts`
+5. Manual test: create a test file, read it with the tool, verify content matches

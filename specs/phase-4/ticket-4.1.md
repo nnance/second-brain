@@ -1,85 +1,78 @@
-# Ticket 4.1: Implement Confidence Threshold Check
+# Ticket 4.1: Claude Agent SDK Integration
 
 ## Description
-Add logic to check if categorization confidence meets the threshold. If below threshold, the system should trigger the clarification flow instead of storing directly.
+Add the Claude Agent SDK as a dependency and configure it for agent interactions. The SDK provides the `query()` function for running agent conversations and `createSdkMcpServer()` for hosting custom tools. Configure authentication and model selection via environment variables.
 
 ## Acceptance Criteria
-- [ ] Confidence threshold configurable via `CONFIDENCE_THRESHOLD` env var
-- [ ] Default threshold is 70
-- [ ] `shouldClarify()` function returns true when confidence below threshold
-- [ ] Message handler branches based on confidence check
-- [ ] Config module updated with new variable
-- [ ] Unit tests verify threshold logic
+- [ ] Claude Agent SDK installed as a dependency
+- [ ] Zod installed for tool schema definitions
+- [ ] SDK client module exists at `src/agent/client.ts`
+- [ ] API key read from `ANTHROPIC_API_KEY` environment variable
+- [ ] Model configurable via `CLAUDE_MODEL` environment variable
+- [ ] Default model is `claude-sonnet-4-20250514`
+- [ ] Application fails fast if API key is missing
+- [ ] `.env.example` updated with new variables
 
 ## Technical Notes
 
-### Environment Variable
+### Dependencies
+```bash
+npm install @anthropic-ai/claude-agent-sdk zod
+```
+
+### Environment Variables
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CONFIDENCE_THRESHOLD` | No | `70` | Minimum confidence to store without clarification |
+| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | Claude model to use |
 
 ### src/config.ts Update
+Add to config:
 ```typescript
-confidenceThreshold: number;
-
-// In loadConfig():
-confidenceThreshold: Number(process.env.CONFIDENCE_THRESHOLD) || 70,
+anthropicApiKey: string;
+claudeModel: string;
 ```
 
-### src/ai/analyzer.ts Update
+Validate `ANTHROPIC_API_KEY` is present.
+
+### src/agent/client.ts
 ```typescript
+import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../config.js';
+import logger from '../logger.js';
 
-export function shouldClarify(confidence: number): boolean {
-  return confidence < config.confidenceThreshold;
+// Re-export SDK functions for use in other modules
+export { query, tool, createSdkMcpServer };
+
+// Export model configuration
+export const MODEL = config.claudeModel;
+
+// Validate API key is present (SDK reads from ANTHROPIC_API_KEY automatically)
+if (!config.anthropicApiKey) {
+  throw new Error('ANTHROPIC_API_KEY environment variable is required');
 }
-```
 
-### Updated Message Flow
-```
-Input received
-    │
-    ▼
-Analyze input
-    │
-    ▼
-Confidence >= threshold? ──Yes──▶ Store directly
-    │
-    No
-    │
-    ▼
-Trigger clarification flow (Phase 4.2+)
-```
-
-### src/index.ts Update (structure only)
-```typescript
-const analysis = await analyzeInput(message.text);
-
-if (shouldClarify(analysis.confidence)) {
-  // TODO: Clarification flow (tickets 4.2-4.5)
-  logger.info({ confidence: analysis.confidence }, 'Confidence below threshold, clarification needed');
-} else {
-  // Existing direct storage flow
-  const result = await writeNote({ ... });
-  await writeInteractionLog({ ... });
-}
+logger.info({ model: MODEL }, 'Claude Agent SDK initialized');
 ```
 
 ### .env.example Update
 ```bash
-# Optional: Minimum confidence to store without clarification (default: 70)
-CONFIDENCE_THRESHOLD=70
+# Required: Anthropic API key
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional: Claude model (default: claude-sonnet-4-20250514)
+CLAUDE_MODEL=claude-sonnet-4-20250514
 ```
 
-### Unit Tests: src/ai/analyzer.test.ts
+### Unit Tests: src/agent/client.test.ts
 Test cases:
-- `shouldClarify` returns true when below threshold
-- `shouldClarify` returns false when at threshold
-- `shouldClarify` returns false when above threshold
+- Client module exports `query`, `tool`, `createSdkMcpServer`, and `MODEL`
+- Config validation catches missing API key
+- Model defaults to expected value
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
 2. Run `npm test` — exits 0
-3. `shouldClarify(60)` returns true with default threshold
-4. `shouldClarify(70)` returns false with default threshold
-5. `CONFIDENCE_THRESHOLD=50` makes `shouldClarify(60)` return false
+3. Run `npm start` without `ANTHROPIC_API_KEY` — exits with error containing "ANTHROPIC_API_KEY"
+4. File `src/agent/client.ts` exists
+5. `.env.example` includes `ANTHROPIC_API_KEY` and `CLAUDE_MODEL`

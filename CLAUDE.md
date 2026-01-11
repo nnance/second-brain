@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Second Brain is a Personal Knowledge Capture System that captures thoughts, ideas, tasks, and reference material via iMessage, categorizes them using Claude, and stores them in an Obsidian vault with intelligent tagging and confidence-based workflows.
+Second Brain is a Personal Knowledge Capture System built as an **autonomous AI agent**. It captures thoughts, ideas, tasks, and reference material via iMessage, and uses an AI agent (Claude) with tools to categorize, tag, and store them in an Obsidian vault.
+
+**Key architectural principle**: The AI agent makes ALL decisions about categorization, tagging, and when to ask clarifying questions. Application code provides tools only—no business logic is coded.
 
 ## Technology Stack
 
@@ -15,7 +17,8 @@ Second Brain is a Personal Knowledge Capture System that captures thoughts, idea
 - **Linting/Formatting**: Biome
 - **Logging**: Pino
 - **iMessage**: imessage-kit
-- **AI**: Anthropic SDK (Claude Sonnet)
+- **AI Agent**: Claude Agent SDK (@anthropic-ai/claude-agent-sdk)
+- **Validation**: Zod (for tool schemas)
 - **Storage**: Obsidian vault (markdown files)
 
 ## Common Commands
@@ -38,33 +41,50 @@ npm run vault:init # Initialize Obsidian vault folder structure
 | `LOG_LEVEL` | No | `info` | Pino log level |
 | `ANTHROPIC_API_KEY` | Yes | — | API key for Claude |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | Model to use |
-| `CONFIDENCE_THRESHOLD` | No | `70` | Threshold for auto-categorization |
-| `CLARIFICATION_TIMEOUT_MS` | No | `3600000` | Timeout before storing to Inbox |
+| `SESSION_TIMEOUT_MS` | No | `3600000` | Timeout for clarification sessions |
 
 ## Architecture
 
+The system follows an **agent-first architecture** using the Claude Agent SDK where the AI agent is the decision-maker and the application provides tools via an in-process MCP server.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   Interaction Layer                     │
-│                  (iMessage via imessage-kit)            │
+│                   iMessage Listener                     │
+│                  (imessage-kit)                         │
 └─────────────────────────┬───────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                 Categorization Engine                   │
-│                   (Claude Agent SDK)                    │
+│              Claude Agent SDK (query)                   │
 │                                                         │
-│   Input → Analysis → Confidence Score                   │
-│   High confidence → Store directly                      │
-│   Low confidence  → Clarify, then store                 │
+│   System Prompt:                                        │
+│   - Role & personality                                  │
+│   - Vault structure knowledge                           │
+│   - Tag taxonomy                                        │
+│   - Decision guidelines                                 │
+│   - When to clarify vs store                            │
+│                                                         │
+│   In-Process MCP Server (SDK tools):                    │
+│   - vault_write    (create notes)                       │
+│   - vault_read     (read existing notes)                │
+│   - vault_list     (browse/search notes)                │
+│   - log_interaction (audit trail)                       │
+│   - send_message   (reply to user)                      │
 └─────────────────────────┬───────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    Storage Layer                        │
-│                   (Obsidian Vault)                      │
+│                   Obsidian Vault                        │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### Key Architectural Decisions
+
+1. **No hardcoded categorization logic** — Agent decides categories based on system prompt
+2. **No hardcoded confidence thresholds** — Agent judges when clarification is needed
+3. **No hardcoded tag rules** — Agent follows taxonomy from system prompt
+4. **Tools are capabilities, not decisions** — Tools execute; agent decides when/how
+5. **Conversation state in agent context** — Multi-turn clarification handled naturally
 
 ## Obsidian Vault Structure
 
@@ -81,12 +101,13 @@ vault/
 
 ## Implementation Phases
 
-The project is implemented in 4 phases with manual review between each:
+The project is implemented in 5 phases with manual review between each:
 
 1. **Phase 1**: Project Setup + iMessage Listener
-2. **Phase 2**: Obsidian File Writer + Interaction Log
-3. **Phase 3**: Claude Categorization + Tags
-4. **Phase 4**: Clarification Flow + Confirmation
+2. **Phase 2**: Obsidian File Writer + Wiring (messages stored to Inbox)
+3. **Phase 3**: Refactor to Agent Tools (vault_write, vault_read, vault_list, log_interaction, send_message)
+4. **Phase 4**: Agent Integration (Anthropic SDK, system prompt, agent runner)
+5. **Phase 5**: Conversation Management + Polish (sessions, timeouts, error handling)
 
 See `specs/` directory for detailed ticket specifications.
 
@@ -103,8 +124,9 @@ npm run lint     # No errors
 
 ## Key Design Decisions
 
+- **Agent-first**: AI makes all decisions; code provides tools only
 - **Tags over folders**: Flat structure with hierarchical tags (`#person/sarah`, `#project/security-audit`)
-- **Confidence-aware**: Low-confidence categorizations trigger clarification questions
+- **Confidence-aware**: Agent decides when to ask clarifying questions
 - **Auditable**: Complete interaction log for every capture event
 - **Single source of truth**: Obsidian vault only, no syncing to external systems
 
@@ -132,3 +154,30 @@ Content here...
 - Entity: `#person/{name}`, `#project/{name}`, `#topic/{name}`, `#company/{name}`
 - Priority: `#priority/urgent|high|normal|low|someday`
 - Status: `#status/waiting|active|scheduled|done`
+
+## Source Code Structure
+
+```
+src/
+├── index.ts              # Main entry point
+├── config.ts             # Environment configuration
+├── logger.ts             # Pino logger setup
+├── messages/
+│   └── listener.ts       # iMessage listener
+├── tools/
+│   ├── vault-write.ts    # vault_write tool handler
+│   ├── vault-read.ts     # vault_read tool handler
+│   ├── vault-list.ts     # vault_list tool handler
+│   ├── log-interaction.ts # log_interaction tool handler
+│   └── send-message.ts   # send_message tool handler
+├── agent/
+│   ├── client.ts         # Claude Agent SDK exports
+│   ├── mcp-server.ts     # In-process MCP server with tools
+│   ├── system-prompt.ts  # Agent system prompt
+│   └── runner.ts         # Agent query runner
+├── sessions/
+│   ├── store.ts          # Session state management
+│   └── timeout.ts        # Session timeout handling
+└── utils/
+    └── retry.ts          # Retry logic for API calls
+```

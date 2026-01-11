@@ -1,159 +1,160 @@
-# Ticket 3.3: Implement Existing Tag Discovery
+# Ticket 3.3: Implement vault_list Tool
 
 ## Description
-Create a module that scans the Obsidian vault to discover existing tags. This allows Claude to reuse existing tags rather than creating duplicates with slightly different names.
+Create the `vault_list` tool that enables the AI agent to discover existing notes in the vault. This allows the agent to find related notes, check for duplicates, or browse content by folder or tags.
 
 ## Acceptance Criteria
-- [ ] Tag discovery module exists at `src/vault/tags.ts`
-- [ ] Scans all markdown files in the vault
-- [ ] Extracts tags from YAML frontmatter
-- [ ] Returns deduplicated list of tags
-- [ ] Caches results to avoid repeated filesystem scans
-- [ ] Cache invalidation after configurable interval
-- [ ] Unit tests verify tag extraction from frontmatter
+- [ ] Tool exists at `src/tools/vault-list.ts`
+- [ ] Lists files in specified folder (or all folders if not specified)
+- [ ] Optionally filters by tags
+- [ ] Returns file metadata: filepath, title, tags, created date
+- [ ] Supports limit parameter for result count
+- [ ] Returns structured result with success status
+- [ ] Never throws—returns error in result object
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### Tag Sources
-Tags are stored in YAML frontmatter:
-```yaml
-tags:
-  - person/sarah
-  - project/security-audit
-  - topic/security
-  - priority/high
+### Tool Interface
+```typescript
+// src/tools/vault-list.ts
+
+export interface VaultListParams {
+  folder?: string;      // Folder to list (all content folders if omitted)
+  tags?: string[];      // Filter by tags (AND logic - must have all)
+  limit?: number;       // Max results (default 20)
+}
+
+export interface VaultFileInfo {
+  filepath: string;
+  title: string;
+  tags: string[];
+  created: string;      // ISO date string
+}
+
+export interface VaultListResult {
+  success: boolean;
+  files?: VaultFileInfo[];
+  error?: string;
+}
+
+export async function vaultList(params: VaultListParams): Promise<VaultListResult> {
+  // Implementation
+}
 ```
 
-### src/vault/tags.ts
+### Content Folders
+```typescript
+const CONTENT_FOLDERS = ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'];
+```
+
+### Frontmatter Parsing
+Parse YAML frontmatter to extract metadata:
+```typescript
+function parseFrontmatter(content: string): { created?: string; tags?: string[] } {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
+
+  const yaml = match[1];
+  // Parse created and tags from yaml string
+  // Use regex or lightweight YAML parser
+}
+```
+
+### Implementation Skeleton
 ```typescript
 import { readdir, readFile } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join } from 'node:path';
 import { config } from '../config.js';
 import logger from '../logger.js';
 
-interface TagCache {
-  tags: string[];
-  timestamp: number;
-}
+const CONTENT_FOLDERS = ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'];
 
-let tagCache: TagCache | null = null;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-export async function getExistingTags(): Promise<string[]> {
-  const now = Date.now();
-  
-  if (tagCache && (now - tagCache.timestamp) < CACHE_TTL_MS) {
-    logger.debug({ tagCount: tagCache.tags.length }, 'Returning cached tags');
-    return tagCache.tags;
-  }
-  
-  logger.debug('Scanning vault for existing tags');
-  const tags = await scanVaultForTags();
-  
-  tagCache = { tags, timestamp: now };
-  logger.info({ tagCount: tags.length }, 'Tag cache updated');
-  
-  return tags;
-}
-
-export function clearTagCache(): void {
-  tagCache = null;
-  logger.debug('Tag cache cleared');
-}
-
-async function scanVaultForTags(): Promise<string[]> {
-  const allTags = new Set<string>();
-  const folders = ['Tasks', 'Ideas', 'Reference', 'Projects', 'Inbox', 'Archive'];
-  
-  for (const folder of folders) {
-    const folderPath = join(config.vaultPath, folder);
-    const tags = await scanFolderForTags(folderPath);
-    tags.forEach(tag => allTags.add(tag));
-  }
-  
-  return Array.from(allTags).sort();
-}
-
-async function scanFolderForTags(folderPath: string): Promise<string[]> {
-  const tags: string[] = [];
-  
+export async function vaultList(params: VaultListParams): Promise<VaultListResult> {
   try {
-    const entries = await readdir(folderPath, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      if (entry.isFile() && extname(entry.name) === '.md') {
-        const filePath = join(folderPath, entry.name);
-        const fileTags = await extractTagsFromFile(filePath);
-        tags.push(...fileTags);
+    const { folder, tags, limit = 20 } = params;
+
+    const foldersToScan = folder ? [folder] : CONTENT_FOLDERS;
+    const allFiles: VaultFileInfo[] = [];
+
+    for (const folderName of foldersToScan) {
+      const folderPath = join(config.vaultPath, folderName);
+      try {
+        const files = await scanFolder(folderPath, folderName);
+        allFiles.push(...files);
+      } catch {
+        // Folder doesn't exist, skip
       }
     }
-  } catch (error) {
-    // Folder might not exist yet, that's okay
-    logger.debug({ folderPath, error }, 'Could not scan folder');
-  }
-  
-  return tags;
-}
 
-async function extractTagsFromFile(filePath: string): Promise<string[]> {
-  try {
-    const content = await readFile(filePath, 'utf-8');
-    return extractTagsFromContent(content);
-  } catch (error) {
-    logger.debug({ filePath, error }, 'Could not read file');
-    return [];
-  }
-}
-
-export function extractTagsFromContent(content: string): string[] {
-  // Extract YAML frontmatter
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) return [];
-  
-  const frontmatter = frontmatterMatch[1];
-  
-  // Extract tags array (simple parsing, handles common formats)
-  const tagsMatch = frontmatter.match(/tags:\s*\n((?:\s*-\s*.+\n?)*)/);
-  if (!tagsMatch) {
-    // Try inline format: tags: [tag1, tag2]
-    const inlineMatch = frontmatter.match(/tags:\s*\[([^\]]*)\]/);
-    if (inlineMatch) {
-      return inlineMatch[1]
-        .split(',')
-        .map(t => t.trim())
-        .filter(t => t.length > 0);
+    // Filter by tags if specified
+    let filtered = allFiles;
+    if (tags && tags.length > 0) {
+      filtered = allFiles.filter(file =>
+        tags.every(tag => file.tags.includes(tag))
+      );
     }
-    return [];
+
+    // Sort by created date (newest first)
+    filtered.sort((a, b) => b.created.localeCompare(a.created));
+
+    // Apply limit
+    const result = filtered.slice(0, limit);
+
+    logger.debug({ folder, tags, resultCount: result.length }, 'vault_list: Listed files');
+
+    return {
+      success: true,
+      files: result,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error, params }, 'vault_list: Failed');
+    return {
+      success: false,
+      error: message,
+    };
   }
-  
-  // Parse list format
-  const tagLines = tagsMatch[1];
-  return tagLines
-    .split('\n')
-    .map(line => line.replace(/^\s*-\s*/, '').trim())
-    .filter(tag => tag.length > 0);
+}
+
+async function scanFolder(folderPath: string, folderName: string): Promise<VaultFileInfo[]> {
+  const entries = await readdir(folderPath);
+  const files: VaultFileInfo[] = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.md')) continue;
+
+    const filepath = join(folderPath, entry);
+    const content = await readFile(filepath, 'utf-8');
+    const metadata = parseFrontmatter(content);
+    const title = extractTitle(content) || entry.replace('.md', '');
+
+    files.push({
+      filepath: `${folderName}/${entry}`,
+      title,
+      tags: metadata.tags || [],
+      created: metadata.created || '',
+    });
+  }
+
+  return files;
 }
 ```
 
-### Tag Categories
-Based on the taxonomy in the design doc:
-- `person/{name}` — People
-- `project/{name}` — Projects
-- `topic/{name}` — Subject areas
-- `company/{name}` — Organizations
-- `priority/urgent|high|normal|low|someday`
-- `status/waiting|active|scheduled|done`
-
-### Unit Tests: src/vault/tags.test.ts
+### Unit Tests: src/tools/vault-list.test.ts
 Test cases:
-- `extractTagsFromContent` handles list format
-- `extractTagsFromContent` handles inline array format
-- `extractTagsFromContent` handles no frontmatter
-- `extractTagsFromContent` handles no tags field
-- Cache functions work correctly
+- Lists all files when no folder specified
+- Lists files from specific folder
+- Filters by single tag
+- Filters by multiple tags (AND logic)
+- Respects limit parameter
+- Returns empty array for empty folder
+- Handles missing folder gracefully
+- Sorts by created date (newest first)
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, tag tests pass
-3. File `src/vault/tags.ts` exists
-4. Tests exist in `src/vault/tags.test.ts`
+2. Run `npm test` — exits 0, vault-list tests pass
+3. File `src/tools/vault-list.ts` exists
+4. Tests exist in `src/tools/vault-list.test.ts`
+5. Manual test: create test files, verify listing and filtering works

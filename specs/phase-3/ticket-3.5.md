@@ -1,150 +1,135 @@
-# Ticket 3.5: Implement Priority Prediction
+# Ticket 3.5: Implement send_message Tool
 
 ## Description
-Extend the AI analysis to predict priority level for captured items. Priority is expressed as a tag following the established taxonomy.
+Create the `send_message` tool that enables the AI agent to reply to users via iMessage. This allows the agent to send confirmations, ask clarifying questions, and provide feedback.
 
 ## Acceptance Criteria
-- [ ] Priority predictor module exists at `src/ai/priority.ts`
-- [ ] Returns one of: `priority/urgent`, `priority/high`, `priority/normal`, `priority/low`, `priority/someday`
-- [ ] Returns confidence score and reasoning
-- [ ] System prompt explains priority levels
-- [ ] Default to `priority/normal` if unclear
-- [ ] Unit tests verify response parsing
+- [ ] Tool exists at `src/tools/send-message.ts`
+- [ ] Accepts message text and recipient parameters
+- [ ] Sends message via imessage-kit
+- [ ] Returns structured result with success status
+- [ ] Handles send failures gracefully
+- [ ] Never throws—returns error in result object
+- [ ] Unit tests with mocked imessage-kit
 
 ## Technical Notes
 
-### Priority Taxonomy (from design doc)
-| Priority | Description |
-|----------|-------------|
-| `priority/urgent` | Needs attention now |
-| `priority/high` | Important, do soon |
-| `priority/normal` | Default, no special urgency |
-| `priority/low` | Eventually, no pressure |
-| `priority/someday` | Nice to do, no commitment |
-
-### src/ai/priority.ts
+### Tool Interface
 ```typescript
-import { chat } from './client.js';
+// src/tools/send-message.ts
+
+export interface SendMessageParams {
+  message: string;              // Message to send
+  recipient: string;            // Phone number or iMessage ID
+}
+
+export interface SendMessageResult {
+  success: boolean;
+  error?: string;
+}
+
+export async function sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
+  // Implementation
+}
+```
+
+### Implementation
+```typescript
+import { sendMessage as imessageSend } from 'imessage-kit';
 import logger from '../logger.js';
 
-export type Priority = 
-  | 'priority/urgent'
-  | 'priority/high'
-  | 'priority/normal'
-  | 'priority/low'
-  | 'priority/someday';
+export async function sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
+  try {
+    const { message, recipient } = params;
 
-export interface PriorityResult {
-  priority: Priority;
-  confidence: number;
-  reasoning: string;
-}
+    await imessageSend({
+      to: recipient,
+      text: message,
+    });
 
-const SYSTEM_PROMPT = `You are a priority assessment assistant for a personal knowledge capture system.
+    logger.info({ recipient }, 'send_message: Message sent');
 
-Assess the priority of the input based on these levels:
-
-PRIORITY LEVELS:
-- priority/urgent — Needs attention NOW. Time-sensitive, critical deadlines, emergencies.
-- priority/high — Important, should do soon. Clear deadlines within days, significant impact.
-- priority/normal — Default. Regular tasks and items with no special urgency.
-- priority/low — Eventually. Nice to do but no pressure. Can wait indefinitely.
-- priority/someday — Aspirational. No commitment, just capturing for future consideration.
-
-SIGNALS TO LOOK FOR:
-- Explicit urgency words: "urgent", "ASAP", "immediately", "critical"
-- Time references: "today", "tomorrow", "this week", "by Friday"
-- Importance markers: "important", "must", "need to"
-- Casual framing: "maybe", "someday", "might be nice", "just an idea"
-
-When in doubt, default to priority/normal.
-
-Respond with JSON only:
-{
-  "priority": "priority/...",
-  "confidence": <0-100>,
-  "reasoning": "<brief explanation>"
-}`;
-
-export async function predictPriority(input: string): Promise<PriorityResult> {
-  logger.debug({ inputLength: input.length }, 'Predicting priority');
-  
-  const response = await chat(
-    [{ role: 'user', content: input }],
-    { systemPrompt: SYSTEM_PROMPT }
-  );
-  
-  const result = parsePriorityResponse(response);
-  
-  logger.info({
-    priority: result.priority,
-    confidence: result.confidence,
-  }, 'Priority prediction complete');
-  
-  return result;
-}
-
-function parsePriorityResponse(response: string): PriorityResult {
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('No JSON found in priority response');
-  }
-  
-  const parsed = JSON.parse(jsonMatch[0]);
-  
-  const validPriorities: Priority[] = [
-    'priority/urgent',
-    'priority/high',
-    'priority/normal',
-    'priority/low',
-    'priority/someday',
-  ];
-  
-  if (!validPriorities.includes(parsed.priority)) {
-    logger.warn({ received: parsed.priority }, 'Invalid priority, defaulting to normal');
     return {
-      priority: 'priority/normal',
-      confidence: 50,
-      reasoning: 'Default due to invalid response',
+      success: true,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error, params }, 'send_message: Failed');
+    return {
+      success: false,
+      error: errorMessage,
     };
   }
-  
-  return {
-    priority: parsed.priority,
-    confidence: Number(parsed.confidence) || 50,
-    reasoning: parsed.reasoning || '',
-  };
 }
 ```
 
-### Example Input/Output
+### Message Context
+The recipient is extracted from the original incoming message. When the agent runner (Phase 4) invokes this tool, it provides the recipient from the conversation context.
 
-Input: "urgent: call the bank about the fraud charge today"
-```json
-{
-  "priority": "priority/urgent",
-  "confidence": 95,
-  "reasoning": "Explicit 'urgent' marker, time-sensitive financial matter"
-}
-```
+### Rate Limiting Consideration
+While not required for MVP, consider future rate limiting to prevent spam:
+- Track messages sent per recipient
+- Implement cooldown periods if needed
 
-Input: "maybe look into that new note-taking app sometime"
-```json
-{
-  "priority": "priority/someday",
-  "confidence": 85,
-  "reasoning": "Casual 'maybe' and 'sometime' framing indicates no commitment"
-}
-```
-
-### Unit Tests: src/ai/priority.test.ts
+### Unit Tests: src/tools/send-message.test.ts
 Test cases:
-- `parsePriorityResponse` handles valid priorities
-- `parsePriorityResponse` defaults to normal on invalid priority
-- `parsePriorityResponse` handles missing confidence
+- Sends message successfully (mocked imessage-kit)
+- Returns success result
+- Returns error result on failure
+- Handles network errors gracefully
+
+### Mocking imessage-kit
+```typescript
+import { describe, it, mock, beforeEach } from 'node:test';
+import assert from 'node:assert';
+
+// Mock the imessage-kit module before importing the tool
+const mockSendMessage = mock.fn();
+mock.module('imessage-kit', {
+  namedExports: {
+    sendMessage: mockSendMessage,
+  },
+});
+
+// Now import the tool (uses mocked module)
+const { sendMessage } = await import('./send-message.js');
+
+describe('sendMessage', () => {
+  beforeEach(() => {
+    mockSendMessage.mock.resetCalls();
+  });
+
+  it('sends message successfully', async () => {
+    mockSendMessage.mock.mockImplementation(() => Promise.resolve());
+
+    const result = await sendMessage({
+      message: 'Got it! Saved as a task.',
+      recipient: '+1234567890',
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(mockSendMessage.mock.callCount(), 1);
+  });
+
+  it('returns error on failure', async () => {
+    mockSendMessage.mock.mockImplementation(() =>
+      Promise.reject(new Error('Network error'))
+    );
+
+    const result = await sendMessage({
+      message: 'Test message',
+      recipient: '+1234567890',
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'Network error');
+  });
+});
+```
 
 ## Done Conditions (for Claude Code to verify)
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0, priority tests pass
-3. File `src/ai/priority.ts` exists
-4. Tests exist in `src/ai/priority.test.ts`
+2. Run `npm test` — exits 0, send-message tests pass
+3. File `src/tools/send-message.ts` exists
+4. Tests exist in `src/tools/send-message.test.ts`
+5. Manual test: (optional) send test message via the tool

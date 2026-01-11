@@ -1,130 +1,125 @@
-# Ticket 3.1: Integrate Claude Agent SDK
+# Ticket 3.1: Refactor Vault Writer to vault_write Tool
 
 ## Description
-
-Add the Claude Agent SDK (or Anthropic SDK) as a dependency and create a client module for interacting with Claude. Configure authentication and model selection via environment variables.
+Refactor the existing `src/vault/writer.ts` from Phase 2 into an agent-callable tool at `src/tools/vault-write.ts`. The tool accepts structured parameters and returns structured results. It supports writing to any folder (not just Inbox) with full metadata.
 
 ## Acceptance Criteria
-
-- [ ] Anthropic Claude Agent SDK installed as a dependency
-- [ ] Claude client module exists at `src/ai/client.ts`
-- [ ] API key read from `ANTHROPIC_API_KEY` environment variable
-- [ ] Model configurable via `CLAUDE_MODEL` environment variable
-- [ ] Default model is `claude-sonnet-4-20250514`
-- [ ] Client exports a function to send prompts and receive responses
-- [ ] Application fails fast if API key is missing
-- [ ] `.env.example` updated with new variables
+- [ ] Tool exists at `src/tools/vault-write.ts`
+- [ ] Accepts folder, title, content, tags, and confidence parameters
+- [ ] Reuses slug generation and filename logic from Phase 2
+- [ ] Supports all vault folders (Tasks, Ideas, Reference, Projects, Inbox, Archive)
+- [ ] Returns structured result with success status and filepath
+- [ ] Never throws—returns error in result object
+- [ ] Comprehensive unit tests
 
 ## Technical Notes
 
-### Dependencies
-
-```json
-{
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk-typescript": "^0.x"
-  }
-}
-```
-
-### Environment Variables
-
-| Variable            | Required | Default             | Description         |
-| ------------------- | -------- | ------------------- | ------------------- |
-| `ANTHROPIC_API_KEY` | Yes      | —                   | Anthropic API key   |
-| `CLAUDE_MODEL`      | No       | `claude-sonnet-4-5` | Claude model to use |
-
-### src/config.ts Update
-
-Add to config:
-
+### Tool Interface
 ```typescript
-anthropicApiKey: string;
-claudeModel: string;
-```
+// src/tools/vault-write.ts
 
-Validate `ANTHROPIC_API_KEY` is present.
+export type VaultFolder = 'Tasks' | 'Ideas' | 'Reference' | 'Projects' | 'Inbox' | 'Archive';
 
-### src/ai/client.ts
-
-```typescript
-import Anthropic from "@anthropic-ai/sdk";
-import { config } from "../config.js";
-import logger from "../logger.js";
-
-const client = new Anthropic({
-  apiKey: config.anthropicApiKey,
-});
-
-export interface ChatMessage {
-  role: "user" | "assistant";
+export interface VaultWriteParams {
+  folder: VaultFolder;
+  title: string;
   content: string;
+  tags: string[];
+  confidence: number;
 }
 
-export interface ChatOptions {
-  systemPrompt?: string;
-  maxTokens?: number;
+export interface VaultWriteResult {
+  success: boolean;
+  filepath?: string;
+  filename?: string;
+  error?: string;
 }
 
-export async function chat(
-  messages: ChatMessage[],
-  options: ChatOptions = {}
-): Promise<string> {
-  const { systemPrompt, maxTokens = 1024 } = options;
+export async function vaultWrite(params: VaultWriteParams): Promise<VaultWriteResult> {
+  // Implementation
+}
+```
 
-  logger.debug(
-    { messageCount: messages.length, model: config.claudeModel },
-    "Sending request to Claude"
-  );
+### Reusing Phase 2 Logic
+The existing `src/vault/writer.ts` has:
+- `generateSlug()` — Convert title to filename-safe slug
+- `resolveUniqueFileName()` — Handle filename collisions
+- `formatNoteContent()` — Create markdown with frontmatter
 
-  const response = await client.messages.create({
-    model: config.claudeModel,
-    max_tokens: maxTokens,
-    system: systemPrompt,
-    messages: messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    })),
-  });
+These can be extracted or reimplemented in the tool.
 
-  // Extract text from response
-  const textContent = response.content.find((block) => block.type === "text");
-  if (!textContent || textContent.type !== "text") {
-    throw new Error("No text content in Claude response");
+### Key Differences from Phase 2
+| Phase 2 | Phase 3 Tool |
+|---------|--------------|
+| Always writes to Inbox | Writes to specified folder |
+| Uses `source: imessage` | Doesn't set source |
+| `confidence: null` | Confidence from agent |
+| `tags: []` empty | Tags from agent |
+| Throws on error | Returns error result |
+
+### Frontmatter Format
+```yaml
+---
+created: 2026-01-10T14:32:00Z
+tags:
+  - person/sarah
+  - project/security-audit
+confidence: 92
+---
+```
+
+### Implementation Skeleton
+```typescript
+import { writeFile, access } from 'node:fs/promises';
+import { join } from 'node:path';
+import { config } from '../config.js';
+import logger from '../logger.js';
+
+export async function vaultWrite(params: VaultWriteParams): Promise<VaultWriteResult> {
+  try {
+    const { folder, title, content, tags, confidence } = params;
+
+    const slug = generateSlug(title);
+    const datePrefix = new Date().toISOString().split('T')[0];
+    const baseFilename = `${datePrefix}_${slug}.md`;
+
+    const folderPath = join(config.vaultPath, folder);
+    const { filename, filepath } = await resolveUniqueFilename(folderPath, baseFilename);
+
+    const fileContent = formatNoteContent(title, content, tags, confidence);
+    await writeFile(filepath, fileContent, 'utf-8');
+
+    logger.info({ filepath, folder }, 'vault_write: Note created');
+
+    return {
+      success: true,
+      filepath: `${folder}/${filename}`,
+      filename,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ error, params }, 'vault_write: Failed');
+    return {
+      success: false,
+      error: message,
+    };
   }
-
-  logger.debug(
-    { responseLength: textContent.text.length },
-    "Received response from Claude"
-  );
-
-  return textContent.text;
 }
 ```
 
-### .env.example Update
-
-```bash
-# Required: Anthropic API key
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional: Claude model (default: claude-sonnet-4-20250514)
-CLAUDE_MODEL=claude-sonnet-4-20250514
-```
-
-### Unit Tests: src/ai/client.test.ts
-
+### Unit Tests: src/tools/vault-write.test.ts
 Test cases:
-
-- Client module exports `chat` function
-- Config validation catches missing API key
-
-Note: Actual API calls should be mocked in tests.
+- Creates file in correct folder
+- Generates correct filename format
+- Creates valid YAML frontmatter with tags
+- Handles filename collisions
+- Returns success result with filepath
+- Returns error result on failure
+- Slug generation handles edge cases
 
 ## Done Conditions (for Claude Code to verify)
-
 1. Run `npm run build` — exits 0
-2. Run `npm test` — exits 0
-3. Run `npm start` without `ANTHROPIC_API_KEY` — exits with error containing "ANTHROPIC_API_KEY"
-4. File `src/ai/client.ts` exists
-5. `.env.example` includes `ANTHROPIC_API_KEY` and `CLAUDE_MODEL`
+2. Run `npm test` — exits 0, vault-write tests pass
+3. File `src/tools/vault-write.ts` exists
+4. Tests exist in `src/tools/vault-write.test.ts`
+5. Manual test: call function, verify file created with correct content
