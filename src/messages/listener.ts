@@ -1,8 +1,4 @@
-import {
-  type AdvancedIMessageKit,
-  type MessageResponse,
-  SDK,
-} from "@photon-ai/advanced-imessage-kit";
+import { IMessageSDK, type Message } from "@photon-ai/imessage-kit";
 import logger from "../logger.js";
 
 export interface IncomingMessage {
@@ -17,47 +13,43 @@ export interface MessageHandler {
   onMessage: (message: IncomingMessage) => void | Promise<void>;
 }
 
-let sdk: AdvancedIMessageKit | null = null;
+let sdk: IMessageSDK | null = null;
 
 export async function startListener(handler: MessageHandler): Promise<void> {
-  const serverUrl = process.env.IMESSAGE_SERVER_URL || "http://localhost:1234";
-
   try {
-    sdk = SDK({
-      serverUrl,
-      logLevel: "error",
+    sdk = new IMessageSDK({
+      debug: process.env.LOG_LEVEL === "debug",
     });
 
-    await sdk.connect();
+    await sdk.startWatching({
+      onMessage: async (message: Message) => {
+        if (message.isFromMe) {
+          return;
+        }
 
-    sdk.on("new-message", async (message: MessageResponse) => {
-      if (message.isFromMe) {
-        return;
-      }
+        const incomingMessage: IncomingMessage = {
+          sender: message.sender,
+          text: message.text || "",
+          timestamp: message.date,
+          chatGuid: message.chatId,
+          messageGuid: message.guid,
+        };
 
-      const incomingMessage: IncomingMessage = {
-        sender: message.handle?.address || "unknown",
-        text: message.text || "",
-        timestamp: new Date(message.dateCreated ?? Date.now()),
-        chatGuid: message.chats?.[0]?.guid || "",
-        messageGuid: message.guid || "",
-      };
-
-      try {
-        await handler.onMessage(incomingMessage);
-      } catch (err) {
-        logger.error(
-          { err, message: incomingMessage },
-          "Error processing message",
-        );
-      }
+        try {
+          await handler.onMessage(incomingMessage);
+        } catch (err) {
+          logger.error(
+            { err, message: incomingMessage },
+            "Error processing message",
+          );
+        }
+      },
+      onError: (err: Error) => {
+        logger.error({ err }, "iMessage watcher error");
+      },
     });
 
-    sdk.on("error", (err: Error) => {
-      logger.error({ err }, "iMessage SDK error");
-    });
-
-    logger.info({ serverUrl }, "iMessage listener started");
+    logger.info("iMessage listener started");
   } catch (err) {
     logger.error({ err }, "Failed to start iMessage listener");
     throw err;
@@ -67,6 +59,7 @@ export async function startListener(handler: MessageHandler): Promise<void> {
 export async function stopListener(): Promise<void> {
   if (sdk) {
     try {
+      sdk.stopWatching();
       await sdk.close();
       sdk = null;
       logger.info("iMessage listener stopped");
@@ -76,6 +69,6 @@ export async function stopListener(): Promise<void> {
   }
 }
 
-export function getSDK(): AdvancedIMessageKit | null {
+export function getSDK(): IMessageSDK | null {
   return sdk;
 }

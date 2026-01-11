@@ -47,9 +47,8 @@ Reference/2026-01-10_zero-trust-architecture-article.md
 
 1. Sign into Messages.app with a dedicated iMessage account
 2. Grant Full Disk Access permission to Terminal (or your IDE):
-   - System Preferences → Security & Privacy → Privacy → Full Disk Access
-3. Run an iMessage server (e.g., BlueBubbles) on the same machine
-4. Set `IMESSAGE_SERVER_URL` environment variable to the server URL (default: `http://localhost:1234`)
+   - System Settings → Privacy & Security → Full Disk Access
+   - Add your terminal app (Terminal, iTerm, Warp) or IDE (VS Code, Cursor)
 
 ## Installation
 
