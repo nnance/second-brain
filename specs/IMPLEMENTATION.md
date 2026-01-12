@@ -158,15 +158,7 @@ Multi-turn conversations are handled by maintaining message history:
 
 ## Post-MVP (Tracked)
 
-Not planned in detail, to be revisited after MVP usage:
-
-- Archive lifecycle (move items when marked #status/done)
-- Inbox triage tooling
-- Tag evolution/suggestions
-- Slack adapter
-- Apple Calendar integration
-- Apple Contacts integration
-- Reminder/surfacing engine
+See [FEATURE-QUEUE.md](./FEATURE-QUEUE.md) for the prioritized list of post-MVP features and their current status.
 
 ## Reference Documents
 
