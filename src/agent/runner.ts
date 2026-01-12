@@ -65,12 +65,14 @@ export async function runAgent(
       }
     }
 
-    // Should not reach here, but handle gracefully
-    logger.warn("Query stream ended without result message");
-    return { success: true };
+    // Should not reach here - return error if query ends without result
+    logger.error("Query stream ended without result message");
+    return { success: false, error: "Query ended unexpectedly" };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logger.error({ error }, "Agent run threw exception");
-    return { success: false, error: message };
+    // Sanitize error - only log message, not full object which may contain user data
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    logger.error({ error: errorMessage }, "Agent run threw exception");
+    return { success: false, error: errorMessage };
   }
 }

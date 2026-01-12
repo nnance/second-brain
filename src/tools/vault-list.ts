@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { join, normalize } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { config } from "../config.js";
 import logger from "../logger.js";
 
@@ -192,5 +192,15 @@ function extractTitle(content: string): string | null {
 
 function isValidFolderPath(folder: string): boolean {
   const normalized = normalize(folder);
-  return !normalized.startsWith("..") && !normalized.includes("../");
+
+  // Basic checks for path traversal patterns
+  if (normalized.startsWith("..") || normalized.includes("../")) {
+    return false;
+  }
+
+  // Verify the resolved path stays within the vault directory
+  const vaultRoot = resolve(config.vaultPath);
+  const resolvedPath = resolve(config.vaultPath, normalized);
+
+  return resolvedPath.startsWith(`${vaultRoot}/`) || resolvedPath === vaultRoot;
 }
