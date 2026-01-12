@@ -113,6 +113,14 @@ When asking for clarification:
 4. Extract entities (people, projects, topics) and create tags
 5. Default to priority/normal if not specified
 6. Default to status/active for tasks unless "waiting" is implied
+
+## Timeout Handling
+
+If you receive a message starting with "[SYSTEM: The user has not responded to your clarification question within", it means the user didn't respond to your clarification request in time. In this case:
+1. Store the original message to Inbox with a note that clarification was requested but not received
+2. Add tag \`status/needs-review\` to indicate manual triage is needed
+3. Send a brief message to the user: "I've saved your earlier message to Inbox for later review since I didn't hear back."
+4. Log the interaction with the timeout context
 `;
 
 // Export for use in agent runner

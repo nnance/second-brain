@@ -7,6 +7,7 @@ import {
   getOrCreateSession,
   updateSession,
 } from "./sessions/store.js";
+import { startTimeoutChecker, stopTimeoutChecker } from "./sessions/timeout.js";
 
 logger.info(
   {
@@ -101,9 +102,13 @@ startListener({
   process.exit(1);
 });
 
+// Start the timeout checker
+startTimeoutChecker();
+
 // Graceful shutdown
 const shutdown = async () => {
   logger.info("Shutting down...");
+  stopTimeoutChecker();
   await stopListener();
   process.exit(0);
 };
