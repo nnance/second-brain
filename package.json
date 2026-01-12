@@ -9,7 +9,7 @@
     "dev": "tsx src/index.ts",
     "dev:pretty": "tsx src/index.ts | pino-pretty",
     "start": "tsx src/index.ts",
-    "test": "VAULT_PATH=/tmp/test-vault node --import tsx --test 'src/**/*.test.ts'",
+    "test": "VAULT_PATH=/tmp/test-vault ANTHROPIC_API_KEY=test-key node --import tsx --test 'src/**/*.test.ts'",
     "lint": "biome check .",
     "format": "biome format . --write",
     "vault:init": "tsx src/scripts/init-vault.ts"
@@ -25,7 +25,9 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.5",
     "@photon-ai/imessage-kit": "^2.1.0",
-    "pino": "^9.14.0"
+    "pino": "^9.14.0",
+    "zod": "^4.3.5"
   }
 }
