@@ -6,6 +6,8 @@ interface Config {
   anthropicApiKey: string;
   claudeModel: string;
   sessionTimeoutMs: number;
+  maxRetries: number;
+  retryDelayMs: number;
 }
 
 function loadConfig(): Config {
@@ -28,6 +30,8 @@ function loadConfig(): Config {
     anthropicApiKey,
     claudeModel: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     sessionTimeoutMs: Number(process.env.SESSION_TIMEOUT_MS) || 3600000, // Default 1 hour
+    maxRetries: Number(process.env.MAX_RETRIES) || 3,
+    retryDelayMs: Number(process.env.RETRY_DELAY_MS) || 1000,
   };
 }
 

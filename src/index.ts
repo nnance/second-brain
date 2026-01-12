@@ -8,6 +8,8 @@ import {
   updateSession,
 } from "./sessions/store.js";
 import { startTimeoutChecker, stopTimeoutChecker } from "./sessions/timeout.js";
+import { sendMessage } from "./tools/send-message.js";
+import { isRetryableError, withRetry } from "./utils/retry.js";
 
 logger.info(
   {
@@ -17,9 +19,25 @@ logger.info(
   "second-brain starting...",
 );
 
+/**
+ * Send error notification to user.
+ * Does not retry to avoid loops.
+ */
+async function notifyError(chatGuid: string): Promise<void> {
+  try {
+    await sendMessage({
+      chat_guid: chatGuid,
+      text: "Sorry, I couldn't process your message. Please try again later.",
+    });
+  } catch {
+    // Log but don't fail further
+    logger.error("Failed to send error notification to user");
+  }
+}
+
 startListener({
   onMessage: async (message) => {
-    const { text, sender } = message;
+    const { text, sender, chatGuid } = message;
 
     logger.info(
       {
@@ -34,11 +52,10 @@ startListener({
       // Get or create session for this sender
       const session = getOrCreateSession(sender);
 
-      // Run agent with conversation history
-      const result = await runAgent(
-        text,
-        { recipient: sender },
-        session.history,
+      // Run agent with conversation history, with retry for transient errors
+      const result = await withRetry(
+        () => runAgent(text, { recipient: chatGuid }, session.history),
+        { shouldRetry: isRetryableError },
       );
 
       if (result.success) {
@@ -73,8 +90,9 @@ startListener({
           );
         }
       } else {
-        // Error - clear session
+        // Agent returned error - notify user and clear session
         deleteSession(sender);
+        await notifyError(chatGuid);
         logger.error(
           {
             event: "agent_failed",
@@ -85,13 +103,14 @@ startListener({
         );
       }
     } catch (error) {
-      // Error - clear session
+      // Unrecoverable error - notify user and clear session
       deleteSession(sender);
+      await notifyError(chatGuid);
       logger.error(
         {
           event: "agent_error",
           sender,
-          error,
+          error: error instanceof Error ? error.message : String(error),
         },
         "Unexpected error in agent, session cleared",
       );
