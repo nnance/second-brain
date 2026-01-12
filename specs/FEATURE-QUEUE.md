@@ -30,6 +30,7 @@ Backlog → Designing → In Progress → Review → Completed
 - [ ] Apple Contacts integration
 - [ ] Reminder/surfacing engine
 - [ ] macOS background service (launchd script for running as a service)
+- [ ] GitHub main branch monitor (watch for changes to main, auto-pull and restart service)
 
 ---
 

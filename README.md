@@ -40,8 +40,48 @@ Reference/2026-01-10_zero-trust-architecture-article.md
 
 - macOS with Messages.app signed into a dedicated iMessage account
 - Node.js 20+ (LTS)
-- An Obsidian vault
+- An Obsidian vault (shared via iCloud recommended)
 - Anthropic API key
+
+## Environment Setup
+
+This system requires a dedicated macOS user account for the AI agent. This isolates the agent's iMessage access and provides a clean environment for running the service.
+
+### 1. Create a dedicated Apple ID for the AI agent
+
+1. Go to [appleid.apple.com](https://appleid.apple.com) and create a new Apple ID
+2. Use a dedicated email address for the agent (e.g., `myname-ai-agent@icloud.com`)
+3. Complete verification and setup
+
+### 2. Add the AI agent as a user on your Mac
+
+1. Open **System Settings** → **Users & Groups**
+2. Click **Add User...**
+3. Create a new Standard user account for the AI agent
+4. Sign into the new account with the AI agent's Apple ID
+
+### 3. Set up a shared Obsidian vault
+
+1. On your **primary user account**, create or identify your Obsidian vault
+2. Store the vault in your iCloud Drive folder (e.g., `~/Library/Mobile Documents/com~apple~CloudDocs/Obsidian/SecondBrain`)
+3. Share this vault folder with the AI agent account:
+   - Right-click the vault folder → **Get Info**
+   - Under **Sharing & Permissions**, click the lock to make changes
+   - Click **+** and add the AI agent user account
+   - Set permissions to **Read & Write**
+   - Click the gear icon → **Apply to enclosed items**
+
+### 4. Configure the AI agent account
+
+1. Log into the AI agent user account
+2. Open **Messages.app** and sign in with the AI agent's Apple ID
+3. Clone this repository and install dependencies (see Installation below)
+4. Configure the `.env` file with the path to the shared vault
+5. Grant Full Disk Access (see below)
+
+### 5. Send messages to your AI agent
+
+From your primary account (or any device), send iMessages to the AI agent's Apple ID. The agent will process them and store notes in the shared Obsidian vault, which syncs back to your primary account via iCloud.
 
 ## Installation
 
@@ -76,7 +116,7 @@ If you see the file path, you're good. If you get "Operation not permitted", the
 
 ### 3. Sign into Messages.app
 
-Sign into Messages.app with a dedicated iMessage account that will receive your capture messages.
+Sign into Messages.app with the AI agent's dedicated iMessage account.
 
 ## Configuration
 
@@ -136,12 +176,21 @@ npm run format     # Format with Biome
 
 ## Project Status
 
-Under development. See `specs/` for the implementation plan:
+The core system is functional. See [`specs/FEATURE-QUEUE.md`](specs/FEATURE-QUEUE.md) for the roadmap of planned features and their current status.
 
-- **Phase 1**: Project setup + iMessage listener
-- **Phase 2**: Obsidian file writer + interaction log
-- **Phase 3**: Claude categorization + tags
-- **Phase 4**: Clarification flow + confirmation
+**Current capabilities:**
+- iMessage listener captures incoming messages
+- Claude agent analyzes and categorizes content
+- Notes stored in Obsidian vault with tags and metadata
+- Clarification flow for ambiguous messages
+- Complete interaction audit trail
+
+**Planned features** (see feature queue for details):
+- Archive lifecycle management
+- macOS background service (launchd)
+- GitHub auto-pull and restart
+- Additional adapters (Slack, Apple Calendar, Contacts)
+- Tag evolution and suggestions
 
 ## License
 
