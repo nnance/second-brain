@@ -98,7 +98,7 @@ async function handleTimeout(session: Session): Promise<void> {
 
     await runAgentFn(
       timeoutMessage,
-      { recipient: session.senderId },
+      { recipient: session.chatGuid },
       session.history,
     );
 

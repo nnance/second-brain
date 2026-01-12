@@ -39,7 +39,7 @@ describe("Integration: Error Handling", () => {
       const sender = "error-sender";
       const mockRunAgent = createMockFailedResult("API error");
 
-      const session = getOrCreateSession(sender);
+      const session = getOrCreateSession(sender, `chat-${sender}`);
       const result = await mockRunAgent(
         "test message",
         { recipient: sender },
@@ -54,7 +54,7 @@ describe("Integration: Error Handling", () => {
       const sender = "cleanup-sender";
 
       // Create session
-      createSession(sender);
+      createSession(sender, `chat-${sender}`);
       assert.notEqual(getSession(sender), undefined);
 
       // Simulate error handling - in production code this would happen
@@ -116,8 +116,8 @@ describe("Integration: Error Handling", () => {
       const sender2 = "sender-2";
 
       // Create both sessions
-      createSession(sender1);
-      createSession(sender2);
+      createSession(sender1, "chat-1");
+      createSession(sender2, "chat-2");
 
       // Simulate error on sender1
       deleteSession(sender1);
@@ -141,7 +141,7 @@ describe("Integration: Error Handling", () => {
       }
 
       // New session can be created
-      const session = getOrCreateSession(sender);
+      const session = getOrCreateSession(sender, `chat-${sender}`);
       assert.notEqual(session, undefined);
       assert.deepEqual(session.history, []);
 

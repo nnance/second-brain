@@ -31,7 +31,7 @@ describe("Integration: Clarification Flow", () => {
       const sender = "test-sender-1";
       const mockRunAgent = createMockClarificationRequest();
 
-      const session = getOrCreateSession(sender);
+      const session = getOrCreateSession(sender, `chat-${sender}`);
       const result = await mockRunAgent(
         "zero trust architecture",
         { recipient: sender },

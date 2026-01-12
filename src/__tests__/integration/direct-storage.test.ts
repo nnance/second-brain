@@ -36,7 +36,7 @@ describe("Integration: Direct Storage Flow", () => {
       const mockRunAgent = createMockDirectStorage();
 
       // Create session
-      const session = getOrCreateSession(sender);
+      const session = getOrCreateSession(sender, `chat-${sender}`);
       assert.deepEqual(session.history, []);
 
       // Simulate agent processing
@@ -56,7 +56,7 @@ describe("Integration: Direct Storage Flow", () => {
       const sender = "test-sender-2";
       const mockRunAgent = createMockDirectStorage();
 
-      const session = getOrCreateSession(sender);
+      const session = getOrCreateSession(sender, `chat-${sender}`);
       const result = await mockRunAgent(
         "save this important note",
         { recipient: sender },

@@ -38,7 +38,7 @@ describe("Integration: Multi-Turn Conversation", () => {
 
       // Turn 1: Agent asks clarification
       setRunAgentFn(createMockClarificationRequest());
-      const session1 = getOrCreateSession(sender);
+      const session1 = getOrCreateSession(sender, `chat-${sender}`);
 
       const result1 = await createMockClarificationRequest()(
         "zero trust architecture",
@@ -85,7 +85,7 @@ describe("Integration: Multi-Turn Conversation", () => {
       const sender = "history-test-sender";
 
       // Initial message
-      const session = getOrCreateSession(sender);
+      const session = getOrCreateSession(sender, `chat-${sender}`);
       const result1 = await createMockClarificationRequest()(
         "first message",
         { recipient: sender },
@@ -119,8 +119,8 @@ describe("Integration: Multi-Turn Conversation", () => {
       const sender2 = "sender-2";
 
       // Create sessions for both
-      getOrCreateSession(sender1);
-      getOrCreateSession(sender2);
+      getOrCreateSession(sender1, "chat-1");
+      getOrCreateSession(sender2, "chat-2");
 
       // Update sender1 with history
       updateSession(sender1, {

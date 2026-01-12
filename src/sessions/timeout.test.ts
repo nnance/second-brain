@@ -62,7 +62,7 @@ describe("Session Timeout", () => {
   describe("checkTimeouts", () => {
     it("ignores sessions within timeout window", async () => {
       // Create a fresh session
-      createSession("sender1");
+      createSession("sender1", "chat-1");
       updateSession("sender1", {
         pendingInput: "test input",
         history: [{ role: "user", content: "test" }],
@@ -77,7 +77,7 @@ describe("Session Timeout", () => {
 
     it("identifies expired sessions", async () => {
       // Create a session with old lastActivity
-      createSession("sender1");
+      createSession("sender1", "chat-1");
       const session = getSession("sender1");
       if (session) {
         // Manually set lastActivity to be old (2 hours ago)
@@ -97,13 +97,13 @@ describe("Session Timeout", () => {
 
     it("handles multiple sessions with different ages", async () => {
       // Fresh session
-      createSession("fresh");
+      createSession("fresh", "chat-fresh");
       updateSession("fresh", {
         pendingInput: "fresh input",
       });
 
       // Expired session
-      createSession("expired");
+      createSession("expired", "chat-expired");
       const expiredSession = getSession("expired");
       if (expiredSession) {
         expiredSession.lastActivity = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -125,7 +125,7 @@ describe("Session Timeout", () => {
       });
 
       // Create an expired session
-      createSession("sender1");
+      createSession("sender1", "chat-1");
       const session = getSession("sender1");
       if (session) {
         session.lastActivity = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -139,7 +139,7 @@ describe("Session Timeout", () => {
       assert.equal(getSession("sender1"), undefined);
     });
 
-    it("calls runAgent with correct timeout message", async () => {
+    it("calls runAgent with chatGuid as recipient", async () => {
       let capturedMessage = "";
       let capturedRecipient = "";
 
@@ -149,8 +149,8 @@ describe("Session Timeout", () => {
         return { success: true, toolsCalled: [], history: [] };
       });
 
-      // Create an expired session
-      createSession("sender123");
+      // Create an expired session with chatGuid
+      createSession("sender123", "chat-guid-123");
       const session = getSession("sender123");
       if (session) {
         session.lastActivity = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -162,7 +162,8 @@ describe("Session Timeout", () => {
       // Verify the message contains timeout info
       assert(capturedMessage.includes("[SYSTEM:"));
       assert(capturedMessage.includes("original user input"));
-      assert.equal(capturedRecipient, "sender123");
+      // Recipient should be chatGuid, not senderId
+      assert.equal(capturedRecipient, "chat-guid-123");
     });
   });
 });

@@ -40,7 +40,7 @@ describe("Integration: Session Timeout", () => {
       const sender = "timeout-sender";
 
       // Create a session with old lastActivity
-      createSession(sender);
+      createSession(sender, `chat-${sender}`);
       const session = getSession(sender);
       if (session) {
         session.lastActivity = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -76,7 +76,7 @@ describe("Integration: Session Timeout", () => {
       });
 
       // Create expired session with pending input
-      createSession(sender);
+      createSession(sender, `chat-${sender}`);
       const session = getSession(sender);
       if (session) {
         session.lastActivity = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -95,13 +95,13 @@ describe("Integration: Session Timeout", () => {
       const expiredSender = "expired-sender";
 
       // Create fresh session
-      createSession(freshSender);
+      createSession(freshSender, "chat-fresh");
       updateSession(freshSender, {
         pendingInput: "fresh input",
       });
 
       // Create expired session
-      createSession(expiredSender);
+      createSession(expiredSender, "chat-expired");
       const expiredSession = getSession(expiredSender);
       if (expiredSession) {
         expiredSession.lastActivity = new Date(Date.now() - 2 * 60 * 60 * 1000);

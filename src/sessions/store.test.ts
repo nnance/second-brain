@@ -17,20 +17,22 @@ describe("Session Store", () => {
 
   describe("createSession", () => {
     it("creates session with empty history", () => {
-      const session = createSession("sender1");
+      const session = createSession("sender1", "chat-guid-1");
 
       assert.equal(session.senderId, "sender1");
+      assert.equal(session.chatGuid, "chat-guid-1");
       assert.deepEqual(session.history, []);
       assert(session.lastActivity instanceof Date);
       assert.equal(session.pendingInput, undefined);
     });
 
     it("overwrites existing session", () => {
-      createSession("sender1");
-      const session2 = createSession("sender1");
+      createSession("sender1", "chat-guid-1");
+      const session2 = createSession("sender1", "chat-guid-2");
 
       assert.equal(getAllSessions().length, 1);
       assert.deepEqual(session2.history, []);
+      assert.equal(session2.chatGuid, "chat-guid-2");
     });
   });
 
@@ -41,7 +43,7 @@ describe("Session Store", () => {
     });
 
     it("returns existing session", () => {
-      createSession("sender1");
+      createSession("sender1", "chat-1");
       const session = getSession("sender1");
 
       assert.notEqual(session, undefined);
@@ -51,22 +53,30 @@ describe("Session Store", () => {
 
   describe("getOrCreateSession", () => {
     it("creates session if not exists", () => {
-      const session = getOrCreateSession("sender1");
+      const session = getOrCreateSession("sender1", "chat-1");
 
       assert.equal(session.senderId, "sender1");
+      assert.equal(session.chatGuid, "chat-1");
       assert.deepEqual(session.history, []);
     });
 
     it("returns existing session if exists", () => {
-      const original = createSession("sender1");
+      createSession("sender1", "chat-1");
       updateSession("sender1", {
         history: [{ role: "user", content: "test" }],
       });
 
-      const session = getOrCreateSession("sender1");
+      const session = getOrCreateSession("sender1", "chat-1");
 
       assert.equal(session.senderId, "sender1");
       assert.equal(session.history.length, 1);
+    });
+
+    it("updates chatGuid when returning existing session", () => {
+      createSession("sender1", "old-chat");
+      const session = getOrCreateSession("sender1", "new-chat");
+
+      assert.equal(session.chatGuid, "new-chat");
     });
   });
 
@@ -77,7 +87,7 @@ describe("Session Store", () => {
     });
 
     it("updates fields and timestamp", async () => {
-      const original = createSession("sender1");
+      const original = createSession("sender1", "chat-1");
       const originalTime = original.lastActivity.getTime();
 
       // Small delay to ensure timestamp changes
@@ -96,7 +106,7 @@ describe("Session Store", () => {
     });
 
     it("cannot overwrite senderId", () => {
-      createSession("sender1");
+      createSession("sender1", "chat-1");
 
       // TypeScript prevents this at compile time, but test runtime behavior
       const updated = updateSession("sender1", {
@@ -114,7 +124,7 @@ describe("Session Store", () => {
     });
 
     it("removes session and returns true", () => {
-      createSession("sender1");
+      createSession("sender1", "chat-1");
       const result = deleteSession("sender1");
 
       assert.equal(result, true);
@@ -129,9 +139,9 @@ describe("Session Store", () => {
     });
 
     it("returns all sessions", () => {
-      createSession("sender1");
-      createSession("sender2");
-      createSession("sender3");
+      createSession("sender1", "chat-1");
+      createSession("sender2", "chat-2");
+      createSession("sender3", "chat-3");
 
       const sessions = getAllSessions();
       assert.equal(sessions.length, 3);
@@ -143,8 +153,8 @@ describe("Session Store", () => {
 
   describe("session isolation", () => {
     it("sessions are isolated by sender ID", () => {
-      createSession("sender1");
-      createSession("sender2");
+      createSession("sender1", "chat-1");
+      createSession("sender2", "chat-2");
 
       updateSession("sender1", {
         history: [{ role: "user", content: "message 1" }],

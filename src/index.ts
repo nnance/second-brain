@@ -50,7 +50,7 @@ startListener({
 
     try {
       // Get or create session for this sender
-      const session = getOrCreateSession(sender);
+      const session = getOrCreateSession(sender, chatGuid);
 
       // Run agent with conversation history, with retry for transient errors
       const result = await withRetry(

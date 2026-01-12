@@ -1,10 +1,12 @@
 import assert from "node:assert";
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { vaultList } from "./vault-list.js";
 
-const TEST_VAULT_PATH = process.env.VAULT_PATH || "/tmp/test-vault";
+// Use isolated vault path for this test to avoid conflicts with parallel tests
+const TEST_VAULT_PATH = join(tmpdir(), `vault-list-test-${Date.now()}`);
 
 // Use unique prefix to avoid conflicts with other tests
 const PREFIX = "vault-list-test-";
@@ -83,19 +85,9 @@ Reference content.
   });
 
   after(async () => {
+    // Clean up entire isolated test vault
     try {
-      await rm(join(TEST_VAULT_PATH, "Tasks", `${PREFIX}task1.md`), {
-        force: true,
-      });
-      await rm(join(TEST_VAULT_PATH, "Tasks", `${PREFIX}task2.md`), {
-        force: true,
-      });
-      await rm(join(TEST_VAULT_PATH, "Ideas", `${PREFIX}idea1.md`), {
-        force: true,
-      });
-      await rm(join(TEST_VAULT_PATH, "Reference", `${PREFIX}ref1.md`), {
-        force: true,
-      });
+      await rm(TEST_VAULT_PATH, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
@@ -103,7 +95,7 @@ Reference content.
 
   describe("vaultList", () => {
     it("lists all files when no folder specified", async () => {
-      const result = await vaultList({});
+      const result = await vaultList({ _vaultPath: TEST_VAULT_PATH });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -112,7 +104,10 @@ Reference content.
     });
 
     it("lists files from specific folder", async () => {
-      const result = await vaultList({ folder: "Tasks" });
+      const result = await vaultList({
+        folder: "Tasks",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -123,7 +118,10 @@ Reference content.
     });
 
     it("filters by single tag", async () => {
-      const result = await vaultList({ tags: ["person/sarah"] });
+      const result = await vaultList({
+        tags: ["person/sarah"],
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -135,6 +133,7 @@ Reference content.
     it("filters by multiple tags (AND logic)", async () => {
       const result = await vaultList({
         tags: ["person/sarah", "priority/high"],
+        _vaultPath: TEST_VAULT_PATH,
       });
 
       assert.equal(result.success, true);
@@ -149,7 +148,7 @@ Reference content.
     });
 
     it("respects limit parameter", async () => {
-      const result = await vaultList({ limit: 2 });
+      const result = await vaultList({ limit: 2, _vaultPath: TEST_VAULT_PATH });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -162,7 +161,10 @@ Reference content.
         recursive: true,
       });
 
-      const result = await vaultList({ folder: "EmptyTestFolder" });
+      const result = await vaultList({
+        folder: "EmptyTestFolder",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -176,7 +178,10 @@ Reference content.
     });
 
     it("handles missing folder gracefully", async () => {
-      const result = await vaultList({ folder: "NonExistent" });
+      const result = await vaultList({
+        folder: "NonExistent",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -184,7 +189,10 @@ Reference content.
     });
 
     it("sorts by created date (newest first)", async () => {
-      const result = await vaultList({ folder: "Tasks" });
+      const result = await vaultList({
+        folder: "Tasks",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -203,7 +211,10 @@ Reference content.
     });
 
     it("extracts title from H1 heading", async () => {
-      const result = await vaultList({ folder: "Tasks" });
+      const result = await vaultList({
+        folder: "Tasks",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -216,7 +227,10 @@ Reference content.
     });
 
     it("parses inline tag format", async () => {
-      const result = await vaultList({ folder: "Ideas" });
+      const result = await vaultList({
+        folder: "Ideas",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, true);
       assert.ok(result.files);
@@ -230,7 +244,10 @@ Reference content.
     });
 
     it("blocks path traversal attempts", async () => {
-      const result = await vaultList({ folder: "../etc" });
+      const result = await vaultList({
+        folder: "../etc",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, false);
       assert.equal(
@@ -240,7 +257,10 @@ Reference content.
     });
 
     it("blocks path with embedded traversal", async () => {
-      const result = await vaultList({ folder: "Tasks/../../../etc" });
+      const result = await vaultList({
+        folder: "Tasks/../../../etc",
+        _vaultPath: TEST_VAULT_PATH,
+      });
 
       assert.equal(result.success, false);
       assert.equal(

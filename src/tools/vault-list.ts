@@ -16,6 +16,7 @@ export interface VaultListParams {
   folder?: string; // Folder to list (all content folders if omitted)
   tags?: string[]; // Filter by tags (AND logic - must have all)
   limit?: number; // Max results (default 20)
+  _vaultPath?: string; // Internal: override vault path for testing
 }
 
 export interface VaultFileInfo {
@@ -35,10 +36,11 @@ export async function vaultList(
   params: VaultListParams,
 ): Promise<VaultListResult> {
   try {
-    const { folder, tags, limit = 20 } = params;
+    const { folder, tags, limit = 20, _vaultPath } = params;
+    const vaultPath = _vaultPath || config.vaultPath;
 
     // Validate folder path if provided
-    if (folder && !isValidFolderPath(folder)) {
+    if (folder && !isValidFolderPath(folder, vaultPath)) {
       return {
         success: false,
         error: "Invalid folder path: directory traversal not allowed",
@@ -49,7 +51,7 @@ export async function vaultList(
     const allFiles: VaultFileInfo[] = [];
 
     for (const folderName of foldersToScan) {
-      const folderPath = join(config.vaultPath, folderName);
+      const folderPath = join(vaultPath, folderName);
       try {
         const files = await scanFolder(folderPath, folderName);
         allFiles.push(...files);
@@ -190,7 +192,7 @@ function extractTitle(content: string): string | null {
   return null;
 }
 
-function isValidFolderPath(folder: string): boolean {
+function isValidFolderPath(folder: string, vaultPath: string): boolean {
   const normalized = normalize(folder);
 
   // Basic checks for path traversal patterns
@@ -199,8 +201,8 @@ function isValidFolderPath(folder: string): boolean {
   }
 
   // Verify the resolved path stays within the vault directory
-  const vaultRoot = resolve(config.vaultPath);
-  const resolvedPath = resolve(config.vaultPath, normalized);
+  const vaultRoot = resolve(vaultPath);
+  const resolvedPath = resolve(vaultPath, normalized);
 
   return resolvedPath.startsWith(`${vaultRoot}/`) || resolvedPath === vaultRoot;
 }

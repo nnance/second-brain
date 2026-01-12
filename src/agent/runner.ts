@@ -115,7 +115,10 @@ export async function runAgent(
             logger.debug({ tool: block.name }, "Tool called");
           }
           if (block.type === "text") {
-            assistantResponse = block.text;
+            // Append text blocks to preserve multi-part responses
+            assistantResponse = assistantResponse
+              ? `${assistantResponse}\n\n${block.text}`
+              : block.text;
           }
         }
       }
