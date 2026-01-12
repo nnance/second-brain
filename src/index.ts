@@ -1,52 +1,58 @@
+import { runAgent } from "./agent/runner.js";
 import { config } from "./config.js";
 import logger from "./logger.js";
 import { startListener, stopListener } from "./messages/listener.js";
-import { writeInteractionLog } from "./vault/interaction-log.js";
-import { writeNote } from "./vault/writer.js";
 
-logger.info({ vaultPath: config.vaultPath }, "second-brain starting...");
+logger.info(
+  {
+    vaultPath: config.vaultPath,
+    model: config.claudeModel,
+  },
+  "second-brain starting...",
+);
 
 startListener({
   onMessage: async (message) => {
-    const timestamp = new Date();
+    const { text, sender } = message;
+
+    logger.info(
+      {
+        event: "message_received",
+        sender,
+        textLength: text.length,
+      },
+      "Processing incoming message",
+    );
 
     try {
-      // Write note to Inbox
-      const result = await writeNote({
-        folder: "Inbox",
-        title: message.text.slice(0, 50), // Use first 50 chars as title
-        body: message.text,
-        metadata: {
-          created: timestamp,
-          source: "imessage",
-          confidence: null,
-          tags: [],
-        },
-      });
+      const result = await runAgent(text, { recipient: sender });
 
-      // Write interaction log
-      await writeInteractionLog({
-        timestamp,
-        input: message.text,
-        storedPath: `Inbox/${result.fileName}`,
-      });
-
-      logger.info(
-        {
-          event: "message_captured",
-          sender: message.sender,
-          filePath: result.filePath,
-        },
-        "Message captured successfully",
-      );
+      if (result.success) {
+        logger.info(
+          {
+            event: "agent_complete",
+            sender,
+          },
+          "Agent completed successfully",
+        );
+      } else {
+        logger.error(
+          {
+            event: "agent_failed",
+            sender,
+            error: result.error,
+          },
+          "Agent failed",
+        );
+      }
     } catch (error) {
       logger.error(
         {
-          event: "capture_failed",
-          sender: message.sender,
+          event: "agent_error",
+          sender,
           error,
         },
-        "Failed to capture message",
+        "Unexpected error in agent",
       );
     }
   },
@@ -56,14 +62,13 @@ startListener({
 });
 
 // Graceful shutdown
-process.on("SIGINT", async () => {
+const shutdown = async () => {
   logger.info("Shutting down...");
   await stopListener();
   process.exit(0);
-});
+};
 
-process.on("SIGTERM", async () => {
-  logger.info("Shutting down...");
-  await stopListener();
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+logger.info("Listening for messages...");
