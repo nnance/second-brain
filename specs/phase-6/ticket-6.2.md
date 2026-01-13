@@ -1,4 +1,4 @@
-# Ticket 5.4: End-to-End Integration Tests
+# Ticket 6.2: End-to-End Integration Tests
 
 ## Description
 Create comprehensive integration tests that verify the entire system works correctly from message input through vault storage and user notification. These tests use mocked external dependencies (iMessage, Anthropic API) to verify the complete flow.

@@ -1,4 +1,4 @@
-# Ticket 5.3: Error Handling + Retries
+# Ticket 6.1: Error Handling + Retries
 
 ## Description
 Implement robust error handling throughout the system, including retries for transient failures (API errors, network issues) and graceful degradation when errors occur. The system should never crash due to individual message failures.

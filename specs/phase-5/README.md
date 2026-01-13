@@ -1,15 +1,13 @@
-# Phase 5: Conversation Management + Polish
+# Phase 5: Conversation Context Management + Session Timeouts
 
 ## Checkpoint
-Multi-turn clarification works: ambiguous text → agent asks question → user responds → agent stores with clarification context. Timeout handling works: pending clarifications expire and get stored to Inbox. System handles errors gracefully.
+Multi-turn clarification works: ambiguous text → agent asks question → user responds → agent stores with clarification context. Timeout handling works: pending clarifications expire and get stored to Inbox.
 
 ## Tickets
 | Ticket | Description |
 |--------|-------------|
 | 5.1 | Conversation context management |
 | 5.2 | Session timeout handling |
-| 5.3 | Error handling + retries |
-| 5.4 | End-to-end integration tests |
 
 ## Environment Requirements
 - All previous environment variables
@@ -19,17 +17,17 @@ Multi-turn clarification works: ambiguous text → agent asks question → user 
 
 ### Conversation State
 ```
-┌─────────────────────────────────────────────────────┐
-│                 Session Store                       │
-│                                                     │
-│  Map<senderId, Session>                             │
-│                                                     │
-│  Session {                                          │
-│    history: MessageParam[]   // Conversation so far │
-│    lastActivity: Date        // For timeout check   │
-│    pendingInput?: string     // Original message    │
-│  }                                                  │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                 Session Store                           │
+│                                                         │
+│  Map<senderId, Session>                                 │
+│                                                         │
+│  Session {                                              │
+│    history: MessageParam[]   // Conversation so far     │
+│    lastActivity: Date        // For timeout check       │
+│    pendingInput?: string     // Original message        │
+│  }                                                      │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### Multi-Turn Flow
@@ -90,5 +88,3 @@ Each sender has their own session. Multiple users can have pending clarification
 4. New message from same sender continues conversation
 5. New message from different sender starts fresh
 6. Timeout stores to Inbox with appropriate log entry
-7. Agent errors don't crash the system
-8. All integration tests pass
