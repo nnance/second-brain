@@ -23,12 +23,25 @@ function loadConfig(): Config {
     process.exit(1);
   }
 
+  // Validate session timeout if provided
+  let sessionTimeoutMs = 3600000; // 1 hour default
+  if (process.env.SESSION_TIMEOUT_MS) {
+    const rawTimeout = Number(process.env.SESSION_TIMEOUT_MS);
+    if (Number.isNaN(rawTimeout) || rawTimeout <= 0) {
+      logger.fatal(
+        "SESSION_TIMEOUT_MS must be a positive number (milliseconds)",
+      );
+      process.exit(1);
+    }
+    sessionTimeoutMs = rawTimeout;
+  }
+
   return {
     vaultPath,
     logLevel: process.env.LOG_LEVEL || "info",
     anthropicApiKey,
     claudeModel: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
-    sessionTimeoutMs: Number(process.env.SESSION_TIMEOUT_MS) || 3600000, // 1 hour default
+    sessionTimeoutMs,
   };
 }
 

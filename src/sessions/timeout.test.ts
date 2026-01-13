@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { afterEach, beforeEach, describe, it, mock } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   clearAllSessions,
   createSession,
@@ -92,6 +92,23 @@ describe("Session Timeout", () => {
       const sessions = getAllSessions();
       const age = Date.now() - sessions[0].lastActivity.getTime();
       assert.ok(age >= 3600000); // Should be at least 1 hour old
+    });
+
+    it("cleans up expired sessions without pending input", async () => {
+      // Create a session with old lastActivity but no pendingInput
+      createSession("+15551234567");
+      const session = getSession("+15551234567");
+      assert.ok(session);
+
+      // Manually set lastActivity to 2 hours ago (no pendingInput)
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      session.lastActivity = twoHoursAgo;
+
+      await checkTimeouts();
+
+      // Session should be cleaned up (deleted)
+      const afterSession = getSession("+15551234567");
+      assert.strictEqual(afterSession, undefined);
     });
   });
 
