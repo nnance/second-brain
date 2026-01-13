@@ -14,7 +14,7 @@ None
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Session Persistence** — File-based session storage replacing in-memory Map
+- [x] **Phase 1: Session Persistence** — File-based session storage replacing in-memory Map
 - [ ] **Phase 2: Graceful Lifecycle** — Shutdown/startup with state preservation and restoration
 - [ ] **Phase 3: launchd Service** — macOS service configuration with KeepAlive
 - [ ] **Phase 4: Git Monitor** — Watch main branch for changes
@@ -27,12 +27,11 @@ None
 **Goal**: Replace in-memory session Map with file-based storage that survives process restarts
 **Depends on**: Nothing (first phase)
 **Research**: Unlikely (Node.js fs/JSON, established patterns)
-**Plans**: 3 plans
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: Session file store implementation
-- [ ] 01-02: Migrate existing store.ts to use file backend
-- [ ] 01-03: Session persistence tests
+- [x] 01-01: Session file store implementation and store migration
+- [x] 01-02: Session persistence tests
 
 ### Phase 2: Graceful Lifecycle
 **Goal**: Implement clean shutdown that saves state and startup that restores it
@@ -94,7 +93,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Session Persistence | 0/3 | Not started | - |
+| 1. Session Persistence | 2/2 | Complete | 2026-01-13 |
 | 2. Graceful Lifecycle | 0/3 | Not started | - |
 | 3. launchd Service | 0/3 | Not started | - |
 | 4. Git Monitor | 0/2 | Not started | - |
