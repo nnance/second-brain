@@ -1,5 +1,6 @@
 import assert from "node:assert";
-import { beforeEach, describe, it } from "node:test";
+import { promises as fs } from "node:fs";
+import { after, afterEach, beforeEach, describe, it } from "node:test";
 import {
   clearAllSessions,
   createSession,
@@ -7,6 +8,7 @@ import {
   getAllSessions,
   getOrCreateSession,
   getSession,
+  initSessionStore,
   updateSession,
 } from "./store.js";
 
@@ -177,6 +179,179 @@ describe("Session Store", () => {
       assert.strictEqual(retrieved1.pendingInput, "message 1");
       assert.strictEqual(retrieved2.sdkSessionId, "session-2");
       assert.strictEqual(retrieved2.pendingInput, "message 2");
+    });
+  });
+
+  describe("persistence", () => {
+    const testStorePath = "/tmp/test-store-persistence.json";
+    const originalPath = process.env.SESSION_STORE_PATH;
+
+    beforeEach(() => {
+      clearAllSessions();
+      process.env.SESSION_STORE_PATH = testStorePath;
+    });
+
+    afterEach(async () => {
+      // Clean up test files
+      try {
+        await fs.unlink(testStorePath);
+      } catch {
+        // File may not exist
+      }
+      try {
+        await fs.unlink(`${testStorePath}.tmp`);
+      } catch {
+        // Temp file may not exist
+      }
+    });
+
+    after(() => {
+      // Restore original environment
+      if (originalPath) {
+        process.env.SESSION_STORE_PATH = originalPath;
+      } else {
+        delete process.env.SESSION_STORE_PATH;
+      }
+    });
+
+    it("should persist session to file when created", async () => {
+      const session = createSession("+15551234567");
+
+      // Wait briefly for async save to complete
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Verify file was created and contains session
+      const data = await fs.readFile(testStorePath, "utf-8");
+      const parsed = JSON.parse(data);
+
+      assert.ok(Array.isArray(parsed));
+      assert.strictEqual(parsed.length, 1);
+      assert.strictEqual(parsed[0].senderId, "+15551234567");
+    });
+
+    it("should survive simulated restart", async () => {
+      // Create sessions
+      const session1 = createSession("+15551234567");
+      updateSession("+15551234567", {
+        sdkSessionId: "session-abc",
+        pendingInput: "test message",
+      });
+      createSession("+15559876543");
+
+      // Wait for async saves to complete
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Simulate process death by clearing in-memory Map
+      clearAllSessions();
+
+      // Verify sessions are gone from memory
+      assert.strictEqual(getSession("+15551234567"), undefined);
+      assert.strictEqual(getSession("+15559876543"), undefined);
+
+      // Simulate process restart by loading from disk
+      await initSessionStore();
+
+      // Verify sessions are restored
+      const restored1 = getSession("+15551234567");
+      const restored2 = getSession("+15559876543");
+
+      assert.ok(restored1);
+      assert.strictEqual(restored1.senderId, "+15551234567");
+      assert.strictEqual(restored1.sdkSessionId, "session-abc");
+      assert.strictEqual(restored1.pendingInput, "test message");
+      assert.ok(restored1.lastActivity instanceof Date);
+
+      assert.ok(restored2);
+      assert.strictEqual(restored2.senderId, "+15559876543");
+      assert.ok(restored2.lastActivity instanceof Date);
+    });
+
+    it("should persist updates to file", async () => {
+      const session = createSession("+15551234567");
+
+      // Wait for initial save
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Update session
+      updateSession("+15551234567", {
+        sdkSessionId: "session-updated",
+        pendingInput: "new message",
+      });
+
+      // Wait for update to persist
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Verify file reflects the update
+      const data = await fs.readFile(testStorePath, "utf-8");
+      const parsed = JSON.parse(data);
+
+      assert.strictEqual(parsed.length, 1);
+      assert.strictEqual(parsed[0].senderId, "+15551234567");
+      assert.strictEqual(parsed[0].sdkSessionId, "session-updated");
+      assert.strictEqual(parsed[0].pendingInput, "new message");
+    });
+
+    it("should remove session from file when deleted", async () => {
+      // Create two sessions
+      createSession("+15551234567");
+      createSession("+15559876543");
+
+      // Wait for saves
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Verify both are in file
+      let data = await fs.readFile(testStorePath, "utf-8");
+      let parsed = JSON.parse(data);
+      assert.strictEqual(parsed.length, 2);
+
+      // Delete one session
+      deleteSession("+15551234567");
+
+      // Wait for deletion to persist
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Verify only one session remains in file
+      data = await fs.readFile(testStorePath, "utf-8");
+      parsed = JSON.parse(data);
+      assert.strictEqual(parsed.length, 1);
+      assert.strictEqual(parsed[0].senderId, "+15559876543");
+    });
+
+    it("should handle multiple rapid updates", async () => {
+      createSession("+15551234567");
+
+      // Rapid updates (fire-and-forget saves)
+      updateSession("+15551234567", { sdkSessionId: "session-1" });
+      updateSession("+15551234567", { pendingInput: "message-1" });
+      updateSession("+15551234567", { sdkSessionId: "session-2" });
+      updateSession("+15551234567", { pendingInput: "message-2" });
+
+      // Wait for all async saves to complete
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Clear and reload
+      clearAllSessions();
+      await initSessionStore();
+
+      // Verify final state persisted
+      const restored = getSession("+15551234567");
+      assert.ok(restored);
+      assert.strictEqual(restored.sdkSessionId, "session-2");
+      assert.strictEqual(restored.pendingInput, "message-2");
+    });
+
+    it("should initialize empty store when no file exists", async () => {
+      // Ensure file doesn't exist
+      try {
+        await fs.unlink(testStorePath);
+      } catch {
+        // Already doesn't exist
+      }
+
+      await initSessionStore();
+
+      // Should have no sessions
+      assert.strictEqual(getAllSessions().length, 0);
     });
   });
 });
