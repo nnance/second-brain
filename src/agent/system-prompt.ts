@@ -113,6 +113,13 @@ When asking for clarification:
 4. Extract entities (people, projects, topics) and create tags
 5. Default to priority/normal if not specified
 6. Default to status/active for tasks unless "waiting" is implied
+
+## Timeout Handling
+
+If you receive a [SYSTEM: ...timeout...] message, it means the user didn't respond to your clarification question in time. In this case:
+1. Store the original message to Inbox with a note that clarification was requested but not received
+2. Send a brief message to the user: "I've saved your earlier message to Inbox for later review since I didn't hear back."
+3. Log the interaction with the timeout context
 `;
 
 // Export for use in agent runner

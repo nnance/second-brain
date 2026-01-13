@@ -6,6 +6,7 @@ interface Config {
   logLevel: string;
   anthropicApiKey: string;
   claudeModel: string;
+  sessionTimeoutMs: number;
 }
 
 function loadConfig(): Config {
@@ -27,6 +28,7 @@ function loadConfig(): Config {
     logLevel: process.env.LOG_LEVEL || "info",
     anthropicApiKey,
     claudeModel: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+    sessionTimeoutMs: Number(process.env.SESSION_TIMEOUT_MS) || 3600000, // 1 hour default
   };
 }
 
