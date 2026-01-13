@@ -2,6 +2,11 @@ import { runAgent } from "./agent/runner.js";
 import { config } from "./config.js";
 import logger from "./logger.js";
 import { startListener, stopListener } from "./messages/listener.js";
+import {
+  deleteSession,
+  getOrCreateSession,
+  updateSession,
+} from "./sessions/store.js";
 
 logger.info(
   {
@@ -24,35 +29,72 @@ startListener({
       "Processing incoming message",
     );
 
+    // Get or create session for this sender
+    const session = getOrCreateSession(sender);
+
     try {
-      const result = await runAgent(text, { recipient: sender });
+      const result = await runAgent(text, {
+        recipient: sender,
+        resumeSessionId: session.sdkSessionId,
+      });
 
       if (result.success) {
-        logger.info(
-          {
-            event: "agent_complete",
-            sender,
-          },
-          "Agent completed successfully",
-        );
+        // Check if agent asked for clarification (send_message but no vault_write)
+        const askedClarification =
+          result.toolsCalled.includes("send_message") &&
+          !result.toolsCalled.includes("vault_write");
+
+        if (askedClarification) {
+          // Save session for follow-up message
+          updateSession(sender, {
+            sdkSessionId: result.sessionId,
+            pendingInput: session.pendingInput ?? text,
+          });
+
+          logger.info(
+            {
+              event: "clarification_requested",
+              sender,
+              sessionId: result.sessionId,
+            },
+            "Agent requested clarification, session saved",
+          );
+        } else {
+          // Completed - clear session
+          deleteSession(sender);
+
+          logger.info(
+            {
+              event: "agent_complete",
+              sender,
+            },
+            "Agent completed successfully, session cleared",
+          );
+        }
       } else {
+        // Error - clear session
+        deleteSession(sender);
+
         logger.error(
           {
             event: "agent_failed",
             sender,
             error: result.error,
           },
-          "Agent failed",
+          "Agent failed, session cleared",
         );
       }
     } catch (error) {
+      // Clear session on unexpected error
+      deleteSession(sender);
+
       logger.error(
         {
           event: "agent_error",
           sender,
           error,
         },
-        "Unexpected error in agent",
+        "Unexpected error in agent, session cleared",
       );
     }
   },
