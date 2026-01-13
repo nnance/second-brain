@@ -10,13 +10,13 @@ Backlog → Designing → In Progress → Review → Completed
 
 ## Workflow
 
-| Stage | Description |
-|-------|-------------|
-| **Backlog** | Features identified but not yet prioritized for work |
-| **Designing** | Feature is being designed/specified with tickets |
-| **In Progress** | Active development underway |
-| **Review** | Implementation complete, awaiting manual review |
-| **Completed** | Feature shipped and verified |
+| Stage           | Description                                          |
+| --------------- | ---------------------------------------------------- |
+| **Backlog**     | Features identified but not yet prioritized for work |
+| **Designing**   | Feature is being designed/specified with tickets     |
+| **In Progress** | Active development underway                          |
+| **Review**      | Implementation complete, awaiting manual review      |
+| **Completed**   | Feature shipped and verified                         |
 
 ---
 
@@ -31,6 +31,7 @@ Backlog → Designing → In Progress → Review → Completed
 - [ ] Reminder/surfacing engine
 - [ ] macOS background service (launchd script for running as a service)
 - [ ] GitHub main branch monitor (watch for changes to main, auto-pull and restart service)
+- [ ] File persistance for session store to support graceful restarts
 
 ---
 
@@ -67,6 +68,7 @@ When adding a new feature to the backlog, use this format:
 ```
 
 When a feature moves to **Designing**, create a detailed spec in `specs/features/` with:
+
 - Problem statement
 - Proposed solution
 - Acceptance criteria
