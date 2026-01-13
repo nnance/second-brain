@@ -7,6 +7,7 @@ interface Config {
   anthropicApiKey: string;
   claudeModel: string;
   sessionTimeoutMs: number;
+  sessionStorePath: string;
 }
 
 function loadConfig(): Config {
@@ -42,6 +43,8 @@ function loadConfig(): Config {
     anthropicApiKey,
     claudeModel: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     sessionTimeoutMs,
+    sessionStorePath:
+      process.env.SESSION_STORE_PATH || `${process.cwd()}/.sessions.json`,
   };
 }
 
