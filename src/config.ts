@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import "dotenv/config";
 import logger from "./logger.js";
 
@@ -7,6 +8,11 @@ interface Config {
   anthropicApiKey: string;
   claudeModel: string;
   sessionTimeoutMs: number;
+  reminderPollIntervalMs: number;
+  // Calendar settings
+  calendarProvider: "google" | "none";
+  googleCalendarCredentialsPath: string;
+  googleCalendarIds: string[];
 }
 
 function loadConfig(): Config {
@@ -36,12 +42,39 @@ function loadConfig(): Config {
     sessionTimeoutMs = rawTimeout;
   }
 
+  // Validate reminder poll interval if provided
+  let reminderPollIntervalMs = 300000; // 5 minutes default
+  if (process.env.REMINDER_POLL_INTERVAL_MS) {
+    const rawInterval = Number(process.env.REMINDER_POLL_INTERVAL_MS);
+    if (Number.isNaN(rawInterval) || rawInterval <= 0) {
+      logger.fatal(
+        "REMINDER_POLL_INTERVAL_MS must be a positive number (milliseconds)",
+      );
+      process.exit(1);
+    }
+    reminderPollIntervalMs = rawInterval;
+  }
+
+  // Calendar settings
+  const calendarProvider =
+    (process.env.CALENDAR_PROVIDER as "google" | "none") || "none";
+  const googleCalendarCredentialsPath =
+    process.env.GOOGLE_CALENDAR_CREDENTIALS ||
+    join(process.env.HOME || "", ".second-brain", "google-calendar.json");
+  const googleCalendarIds = process.env.GOOGLE_CALENDAR_IDS?.split(",").map(
+    (s) => s.trim(),
+  ) || ["primary"];
+
   return {
     vaultPath,
     logLevel: process.env.LOG_LEVEL || "info",
     anthropicApiKey,
     claudeModel: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     sessionTimeoutMs,
+    reminderPollIntervalMs,
+    calendarProvider,
+    googleCalendarCredentialsPath,
+    googleCalendarIds,
   };
 }
 

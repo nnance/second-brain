@@ -10,14 +10,20 @@ export interface ShutdownHandlerOptions {
   stopListener: () => Promise<void>;
   stopTimeoutChecker: () => void;
   stopGitMonitor?: () => void;
+  stopReminderScheduler?: () => void;
 }
 
 /**
  * Set up graceful shutdown handlers for SIGTERM and SIGINT signals
  */
 export function setupShutdownHandlers(options: ShutdownHandlerOptions): void {
-  const { sessionStore, stopListener, stopTimeoutChecker, stopGitMonitor } =
-    options;
+  const {
+    sessionStore,
+    stopListener,
+    stopTimeoutChecker,
+    stopGitMonitor,
+    stopReminderScheduler,
+  } = options;
 
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {
@@ -47,6 +53,12 @@ export function setupShutdownHandlers(options: ShutdownHandlerOptions): void {
       if (stopGitMonitor) {
         logger.debug("Stopping git monitor...");
         stopGitMonitor();
+      }
+
+      // Stop the reminder scheduler if running
+      if (stopReminderScheduler) {
+        logger.debug("Stopping reminder scheduler...");
+        stopReminderScheduler();
       }
 
       // Ensure sessions are saved (they save on each change, but flush for safety)
