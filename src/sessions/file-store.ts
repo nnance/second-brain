@@ -11,6 +11,11 @@ interface SerializedSession {
 }
 
 /**
+ * Track pending save operations for graceful shutdown
+ */
+let pendingSave: Promise<void> | null = null;
+
+/**
  * Load sessions from disk
  * Returns empty Map if file doesn't exist or is invalid
  */
@@ -52,31 +57,47 @@ export async function loadSessions(): Promise<Map<string, Session>> {
 export async function saveSessions(
   sessions: Map<string, Session>,
 ): Promise<void> {
-  const filePath = config.sessionStorePath;
-  const tempPath = `${filePath}.tmp`;
+  const saveOp = async () => {
+    const filePath = config.sessionStorePath;
+    const tempPath = `${filePath}.tmp`;
 
-  try {
-    // Serialize sessions
-    const serialized: SerializedSession[] = Array.from(sessions.values()).map(
-      (session) => ({
-        senderId: session.senderId,
-        sdkSessionId: session.sdkSessionId,
-        lastActivity: session.lastActivity.toISOString(),
-        pendingInput: session.pendingInput,
-      }),
-    );
+    try {
+      // Serialize sessions
+      const serialized: SerializedSession[] = Array.from(sessions.values()).map(
+        (session) => ({
+          senderId: session.senderId,
+          sdkSessionId: session.sdkSessionId,
+          lastActivity: session.lastActivity.toISOString(),
+          pendingInput: session.pendingInput,
+        }),
+      );
 
-    const json = JSON.stringify(serialized, null, 2);
+      const json = JSON.stringify(serialized, null, 2);
 
-    // Write to temp file
-    await fs.writeFile(tempPath, json, "utf-8");
+      // Write to temp file
+      await fs.writeFile(tempPath, json, "utf-8");
 
-    // Atomic rename
-    await fs.rename(tempPath, filePath);
+      // Atomic rename
+      await fs.rename(tempPath, filePath);
 
-    logger.debug({ count: sessions.size, filePath }, "Saved sessions to disk");
-  } catch (err) {
-    logger.error({ err, filePath }, "Failed to save sessions to disk");
-    throw err;
+      logger.debug({ count: sessions.size, filePath }, "Saved sessions to disk");
+    } catch (err) {
+      logger.error({ err, filePath }, "Failed to save sessions to disk");
+      throw err;
+    }
+  };
+
+  pendingSave = saveOp();
+  await pendingSave;
+  pendingSave = null;
+}
+
+/**
+ * Wait for any pending save operation to complete
+ * Used during graceful shutdown to prevent data loss
+ */
+export async function waitForPendingSave(): Promise<void> {
+  if (pendingSave) {
+    await pendingSave;
   }
 }
