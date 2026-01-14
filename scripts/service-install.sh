@@ -36,10 +36,11 @@ mkdir -p "$LOG_DIR"
 mkdir -p "$DATA_DIR"
 mkdir -p "$(dirname "$PLIST_DEST")"
 
-# Get node path
-NODE_PATH=$(which node)
-if [ -z "$NODE_PATH" ]; then
-    echo "Error: Node.js not found in PATH"
+# Get tsx path (from local node_modules)
+TSX_PATH="$PROJECT_DIR/node_modules/.bin/tsx"
+if [ ! -x "$TSX_PATH" ]; then
+    echo "Error: tsx not found at $TSX_PATH"
+    echo "Run 'npm install' first"
     exit 1
 fi
 
@@ -57,7 +58,7 @@ sed -e "s|__WORKING_DIR__|$PROJECT_DIR|g" \
     -e "s|__LOG_FILE_PATH__|$LOG_DIR|g" \
     -e "s|__DATA_DIR__|$DATA_DIR|g" \
     -e "s|__LOG_DIR__|$LOG_DIR|g" \
-    -e "s|__NODE_PATH__|$NODE_PATH|g" \
+    -e "s|__TSX_PATH__|$TSX_PATH|g" \
     -e "s|__PATH__|$PATH|g" \
     "$PLIST_SRC" > "$PLIST_DEST"
 
