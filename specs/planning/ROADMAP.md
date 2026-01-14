@@ -22,25 +22,26 @@ Backlog → Designing → In Progress → Review → Completed
 
 ## Backlog
 
-- [ ] Archive lifecycle (move items when marked #status/done)
 - [ ] Inbox triage tooling
 - [ ] Tag evolution/suggestions
 - [ ] Slack adapter
-- [ ] Apple Calendar integration
 - [ ] Apple Contacts integration
-- [ ] Reminder/surfacing engine
 
 ---
 
 ## Designing
 
-_No features currently being designed._
+_No features currently in progress._
 
 ---
 
 ## In Progress
 
-_No features currently in progress._
+### Milestone: [daily-digest](./milestones/daily-digest/)
+
+- [ ] Archive lifecycle (move items when marked #status/done)
+- [ ] Reminder/surfacing engine
+- [ ] Google Calendar integration (multi-calendar support via API)
 
 ---
 

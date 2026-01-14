@@ -25,6 +25,7 @@ The user must provide:
 ### Step 1: Gather Requirements
 
 Parse the user's request to identify:
+
 - The milestone name
 - Which roadmap items to include
 
@@ -33,12 +34,14 @@ If either is missing, ask the user to provide them.
 ### Step 2: Read the Roadmap
 
 Read `specs/planning/ROADMAP.md` to:
+
 - Validate the requested items exist in the Backlog
 - Understand the full context of available features
 
 ### Step 3: Analyze and Suggest Additions
 
 Based on the selected features, consider up to 3 additional features that would make the milestone more valuable. These should:
+
 - Complement the selected features
 - Fill gaps that would otherwise limit usefulness
 - Not significantly increase scope
@@ -56,7 +59,9 @@ Based on your selected features, I recommend also including:
 Would you like to include any of these? (Reply with numbers, "all", or "none")
 ```
 
-Wait for user confirmation before proceeding.
+Use the AskUser Tool and wait for user confirmation before proceeding.
+
+**IMPORTANT** Make sure to confirm all open questions in the `DESIGN-SPEC.md` before proceeding to the implementation planning. Use the AskUser Tool when asking for clearification of the open questions.
 
 ### Step 4: Create the Milestone Structure
 
@@ -77,6 +82,8 @@ specs/planning/milestones/{milestone-name}/
 │   └── ...
 └── ...
 ```
+
+**IMPORTANT** When designing each phase ask the user up to 3 clarifying questions if needed before auhtoring that phase.
 
 ### Step 5: Update the Roadmap
 
@@ -141,9 +148,10 @@ Move all included items from **Backlog** to **Designing** in `specs/planning/ROA
 ## Architecture
 
 {If applicable, describe how the features fit into the system architecture}
-
 ```
+
 {ASCII diagram if helpful}
+
 ```
 
 ---
@@ -184,16 +192,17 @@ Move all included items from **Backlog** to **Designing** in `specs/planning/ROA
 Implementation plan for {milestone description}.
 
 ## Development Workflow
-
 ```
+
 Phase N
-  ├── Ticket N.1 → build → test → verify → commit
-  ├── Ticket N.2 → build → test → verify → commit
-  └── Ticket N.M → build → test → verify → commit
-  ⏸️ STOP — Manual review
+├── Ticket N.1 → build → test → verify → commit
+├── Ticket N.2 → build → test → verify → commit
+└── Ticket N.M → build → test → verify → commit
+⏸️ STOP — Manual review
 
 Phase N+1 (after approval)
-  └── ...
+└── ...
+
 ```
 
 **Within each phase:** Claude Code works autonomously, completing each ticket fully (build passes, tests pass) before committing and moving to the next ticket.
@@ -211,14 +220,16 @@ Phase N+1 (after approval)
 ## Directory Structure
 
 ```
+
 specs/planning/milestones/{milestone-name}/
 ├── DESIGN-SPEC.md
 ├── IMPLEMENTATION.md
 ├── phase-1/
-│   ├── README.md
-│   ├── ticket-1.1.md
-│   └── ...
+│ ├── README.md
+│ ├── ticket-1.1.md
+│ └── ...
 └── ...
+
 ```
 
 ## Reference Documents
@@ -237,11 +248,11 @@ specs/planning/milestones/{milestone-name}/
 
 ## Tickets
 
-| Ticket | Description |
-|--------|-------------|
-| {N}.1 | {Ticket description} |
-| {N}.2 | {Ticket description} |
-| ... | ... |
+| Ticket | Description          |
+| ------ | -------------------- |
+| {N}.1  | {Ticket description} |
+| {N}.2  | {Ticket description} |
+| ...    | ...                  |
 
 ## Environment Requirements
 
