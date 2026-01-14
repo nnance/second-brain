@@ -12,7 +12,13 @@
     "test": "VAULT_PATH=/tmp/test-vault ANTHROPIC_API_KEY=test-key node --import tsx --test 'src/**/*.test.ts'",
     "lint": "biome check .",
     "format": "biome format . --write",
-    "vault:init": "tsx src/scripts/init-vault.ts"
+    "vault:init": "tsx src/scripts/init-vault.ts",
+    "service:install": "bash scripts/service-install.sh",
+    "service:uninstall": "bash scripts/service-uninstall.sh",
+    "service:status": "bash scripts/service-status.sh",
+    "service:start": "launchctl start com.second-brain.agent",
+    "service:stop": "launchctl stop com.second-brain.agent",
+    "service:restart": "launchctl kickstart -k gui/$(id -u)/com.second-brain.agent"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
