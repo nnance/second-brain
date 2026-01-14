@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import "dotenv/config";
 import logger from "./logger.js";
 
@@ -8,6 +9,10 @@ interface Config {
   claudeModel: string;
   sessionTimeoutMs: number;
   reminderPollIntervalMs: number;
+  // Calendar settings
+  calendarProvider: "google" | "none";
+  googleCalendarCredentialsPath: string;
+  googleCalendarIds: string[];
 }
 
 function loadConfig(): Config {
@@ -50,6 +55,16 @@ function loadConfig(): Config {
     reminderPollIntervalMs = rawInterval;
   }
 
+  // Calendar settings
+  const calendarProvider =
+    (process.env.CALENDAR_PROVIDER as "google" | "none") || "none";
+  const googleCalendarCredentialsPath =
+    process.env.GOOGLE_CALENDAR_CREDENTIALS ||
+    join(process.env.HOME || "", ".second-brain", "google-calendar.json");
+  const googleCalendarIds = process.env.GOOGLE_CALENDAR_IDS?.split(",").map(
+    (s) => s.trim(),
+  ) || ["primary"];
+
   return {
     vaultPath,
     logLevel: process.env.LOG_LEVEL || "info",
@@ -57,6 +72,9 @@ function loadConfig(): Config {
     claudeModel: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     sessionTimeoutMs,
     reminderPollIntervalMs,
+    calendarProvider,
+    googleCalendarCredentialsPath,
+    googleCalendarIds,
   };
 }
 

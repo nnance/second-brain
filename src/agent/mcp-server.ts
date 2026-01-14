@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { calendarList } from "../tools/calendar-list.js";
 import { logInteraction } from "../tools/log-interaction.js";
 import { sendMessage } from "../tools/send-message.js";
 import { vaultListReminders } from "../tools/vault-list-reminders.js";
@@ -214,6 +215,39 @@ Excludes Archive folder by default. Returns reminders sorted by due date (soones
   },
 );
 
+// calendar_list tool
+const calendarListTool = tool(
+  "calendar_list",
+  `Query calendar events from the configured calendar provider. Use this to:
+- Check what's on the user's schedule
+- Find specific events by title (for calendar-linked reminders)
+- Help the user plan their day
+
+Range options: today, tomorrow, this_week, or custom (requires from/to dates).`,
+  {
+    range: z
+      .enum(["today", "tomorrow", "this_week", "custom"])
+      .optional()
+      .describe("Time range to query (default: today)"),
+    from: z
+      .string()
+      .optional()
+      .describe("Start of custom range (ISO 8601, required if range=custom)"),
+    to: z
+      .string()
+      .optional()
+      .describe("End of custom range (ISO 8601, required if range=custom)"),
+  },
+  async (args) => {
+    const result = await calendarList({
+      range: args.range,
+      from: args.from,
+      to: args.to,
+    });
+    return textResult(JSON.stringify(result));
+  },
+);
+
 // log_interaction tool
 const logInteractionTool = tool(
   "log_interaction",
@@ -292,6 +326,7 @@ export const baseTools = [
   vaultMoveTool,
   vaultSetReminderTool,
   vaultListRemindersTool,
+  calendarListTool,
   logInteractionTool,
 ];
 
@@ -312,6 +347,7 @@ export const TOOL_NAMES = [
   "mcp__vault-tools__vault_move",
   "mcp__vault-tools__vault_set_reminder",
   "mcp__vault-tools__vault_list_reminders",
+  "mcp__vault-tools__calendar_list",
   "mcp__vault-tools__log_interaction",
   "mcp__vault-tools__send_message",
 ] as const;
