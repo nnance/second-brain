@@ -1,13 +1,15 @@
 import { runAgent } from "./agent/runner.js";
 import { config } from "./config.js";
+import { startGitMonitor, stopGitMonitor } from "./git/monitor.js";
+import { handleUpdate } from "./git/updater.js";
+import { setupShutdownHandlers } from "./lifecycle.js";
 import logger from "./logger.js";
 import { startListener, stopListener } from "./messages/listener.js";
-import {
-  deleteSession,
-  getOrCreateSession,
-  updateSession,
-} from "./sessions/store.js";
+import { FileSessionStore } from "./sessions/file-store.js";
 import { startTimeoutChecker, stopTimeoutChecker } from "./sessions/timeout.js";
+
+// Initialize session store (loads persisted sessions)
+const sessionStore = new FileSessionStore();
 
 logger.info(
   {
@@ -31,7 +33,7 @@ startListener({
     );
 
     // Get or create session for this sender
-    const session = getOrCreateSession(sender);
+    const session = sessionStore.getOrCreateSession(sender);
 
     try {
       const result = await runAgent(text, {
@@ -47,7 +49,7 @@ startListener({
 
         if (askedClarification) {
           // Save session for follow-up message
-          updateSession(sender, {
+          sessionStore.updateSession(sender, {
             sdkSessionId: result.sessionId,
             pendingInput: session.pendingInput ?? text,
           });
@@ -62,7 +64,7 @@ startListener({
           );
         } else {
           // Completed - clear session
-          deleteSession(sender);
+          sessionStore.deleteSession(sender);
 
           logger.info(
             {
@@ -74,7 +76,7 @@ startListener({
         }
       } else {
         // Error - clear session
-        deleteSession(sender);
+        sessionStore.deleteSession(sender);
 
         logger.error(
           {
@@ -87,7 +89,7 @@ startListener({
       }
     } catch (error) {
       // Clear session on unexpected error
-      deleteSession(sender);
+      sessionStore.deleteSession(sender);
 
       logger.error(
         {
@@ -105,17 +107,17 @@ startListener({
 });
 
 // Start timeout checker for session expiration
-startTimeoutChecker();
+startTimeoutChecker(sessionStore);
 
-// Graceful shutdown
-const shutdown = async () => {
-  logger.info("Shutting down...");
-  stopTimeoutChecker();
-  await stopListener();
-  process.exit(0);
-};
+// Start git monitor for auto-updates
+startGitMonitor(handleUpdate);
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+// Setup graceful shutdown handlers
+setupShutdownHandlers({
+  sessionStore,
+  stopListener,
+  stopTimeoutChecker,
+  stopGitMonitor,
+});
 
 logger.info("Listening for messages...");

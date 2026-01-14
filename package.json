@@ -12,12 +12,18 @@
     "test": "VAULT_PATH=/tmp/test-vault ANTHROPIC_API_KEY=test-key node --import tsx --test 'src/**/*.test.ts'",
     "lint": "biome check .",
     "format": "biome format . --write",
-    "vault:init": "tsx src/scripts/init-vault.ts"
+    "vault:init": "tsx src/scripts/init-vault.ts",
+    "service:install": "bash scripts/service-install.sh",
+    "service:uninstall": "bash scripts/service-uninstall.sh",
+    "service:status": "bash scripts/service-status.sh",
+    "service:start": "launchctl start com.second-brain.agent",
+    "service:stop": "launchctl stop com.second-brain.agent",
+    "service:restart": "launchctl kickstart -k gui/$(id -u)/com.second-brain.agent",
+    "status": "tsx scripts/status.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^25.0.6",
-    "pino-pretty": "^11.3.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
@@ -29,6 +35,8 @@
     "@photon-ai/imessage-kit": "^2.1.0",
     "dotenv": "^17.2.3",
     "pino": "^9.14.0",
+    "pino-pretty": "^13.1.3",
+    "pino-roll": "^4.0.0",
     "zod": "^4.3.5"
   }
 }
