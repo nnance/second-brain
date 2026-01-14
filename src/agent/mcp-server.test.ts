@@ -32,8 +32,8 @@ describe("mcp-server", () => {
   });
 
   describe("baseTools", () => {
-    it("has 5 base tools", () => {
-      assert.equal(baseTools.length, 5);
+    it("has 7 base tools", () => {
+      assert.equal(baseTools.length, 7);
     });
 
     it("includes vault_write tool", () => {
@@ -56,6 +56,16 @@ describe("mcp-server", () => {
       assert.ok(tool, "vault_move tool should exist");
     });
 
+    it("includes vault_set_reminder tool", () => {
+      const tool = baseTools.find((t) => t.name === "vault_set_reminder");
+      assert.ok(tool, "vault_set_reminder tool should exist");
+    });
+
+    it("includes vault_list_reminders tool", () => {
+      const tool = baseTools.find((t) => t.name === "vault_list_reminders");
+      assert.ok(tool, "vault_list_reminders tool should exist");
+    });
+
     it("includes log_interaction tool", () => {
       const tool = baseTools.find((t) => t.name === "log_interaction");
       assert.ok(tool, "log_interaction tool should exist");
@@ -76,8 +86,8 @@ describe("mcp-server", () => {
   });
 
   describe("TOOL_NAMES", () => {
-    it("contains 6 tool names", () => {
-      assert.equal(TOOL_NAMES.length, 6);
+    it("contains 8 tool names", () => {
+      assert.equal(TOOL_NAMES.length, 8);
     });
 
     it("all names have mcp__vault-tools__ prefix", () => {
@@ -103,6 +113,14 @@ describe("mcp-server", () => {
 
     it("includes vault_move", () => {
       assert.ok(TOOL_NAMES.includes("mcp__vault-tools__vault_move"));
+    });
+
+    it("includes vault_set_reminder", () => {
+      assert.ok(TOOL_NAMES.includes("mcp__vault-tools__vault_set_reminder"));
+    });
+
+    it("includes vault_list_reminders", () => {
+      assert.ok(TOOL_NAMES.includes("mcp__vault-tools__vault_list_reminders"));
     });
 
     it("includes log_interaction", () => {
