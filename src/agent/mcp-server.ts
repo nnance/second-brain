@@ -3,6 +3,7 @@ import { z } from "zod";
 import { logInteraction } from "../tools/log-interaction.js";
 import { sendMessage } from "../tools/send-message.js";
 import { vaultList } from "../tools/vault-list.js";
+import { vaultMove } from "../tools/vault-move.js";
 import { vaultRead } from "../tools/vault-read.js";
 import { type VaultFolder, vaultWrite } from "../tools/vault-write.js";
 
@@ -107,6 +108,33 @@ const vaultListTool = tool(
   },
 );
 
+// vault_move tool
+const vaultMoveTool = tool(
+  "vault_move",
+  `Move a note from one folder to another in the vault. Use this to:
+- Archive completed items: Move notes with #status/done to Archive
+- Reorganize notes: Move items between Tasks, Ideas, Reference, Projects
+
+When moving to Archive, the tool automatically adds archived_at timestamp and original_folder metadata.`,
+  {
+    source: z
+      .string()
+      .describe(
+        'Source filepath relative to vault root, e.g., "Tasks/2026-01-10_follow-up.md"',
+      ),
+    destination: z
+      .enum(["Tasks", "Ideas", "Reference", "Projects", "Inbox", "Archive"])
+      .describe("The destination folder to move the note to"),
+  },
+  async (args) => {
+    const result = await vaultMove({
+      source: args.source,
+      destination: args.destination,
+    });
+    return textResult(JSON.stringify(result));
+  },
+);
+
 // log_interaction tool
 const logInteractionTool = tool(
   "log_interaction",
@@ -182,6 +210,7 @@ export const baseTools = [
   vaultWriteTool,
   vaultReadTool,
   vaultListTool,
+  vaultMoveTool,
   logInteractionTool,
 ];
 
@@ -199,6 +228,7 @@ export const TOOL_NAMES = [
   "mcp__vault-tools__vault_write",
   "mcp__vault-tools__vault_read",
   "mcp__vault-tools__vault_list",
+  "mcp__vault-tools__vault_move",
   "mcp__vault-tools__log_interaction",
   "mcp__vault-tools__send_message",
 ] as const;

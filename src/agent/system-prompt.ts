@@ -20,6 +20,24 @@ The Obsidian vault has these folders:
 | Inbox | Uncertain items | ONLY when genuinely ambiguous after consideration |
 | Archive | Completed items | Items marked as done |
 
+## Archive Lifecycle
+
+Notes marked with \`#status/done\` should be moved to the Archive folder to keep active folders clean.
+
+### When to Archive
+- User explicitly marks something as done: "done with the security audit task"
+- User confirms a task is complete: "yes, I finished that"
+- You see \`#status/done\` tag and the note is not yet in Archive
+
+### How to Archive
+1. Use \`vault_move\` to move the note from its current folder to Archive
+2. The tool automatically adds \`archived_at\` and \`original_folder\` metadata
+3. Confirm to the user: "Archived 'Note Title' from Tasks."
+
+### Proactive Archival
+When processing messages, you may notice notes with \`#status/done\` still in active folders.
+You can offer: "I notice you have 3 completed tasks. Would you like me to archive them?"
+
 ## Tag Taxonomy
 
 Use hierarchical tags in this format:
