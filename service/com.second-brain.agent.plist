@@ -26,6 +26,8 @@
         <string>__DATA_DIR__</string>
         <key>NODE_ENV</key>
         <string>production</string>
+        <key>RUNNING_AS_SERVICE</key>
+        <string>true</string>
         <key>PATH</key>
         <string>__PATH__</string>
     </dict>

@@ -67,13 +67,10 @@ export async function pullAndRebuild(): Promise<UpdateResult> {
 
 /**
  * Check if we're running as a launchd service
+ * The RUNNING_AS_SERVICE env var is set in the launchd plist
  */
 export function isRunningAsService(): boolean {
-  // Check if we're running under launchd
-  return (
-    process.env.XPC_SERVICE_NAME !== undefined ||
-    process.env.__CFBundleIdentifier !== undefined
-  );
+  return process.env.RUNNING_AS_SERVICE === "true";
 }
 
 /**
