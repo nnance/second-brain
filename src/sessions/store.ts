@@ -1,5 +1,5 @@
-import { loadSessions, saveSessions } from "./file-store.js";
 import logger from "../logger.js";
+import { loadSessions, saveSessions } from "./file-store.js";
 
 export interface Session {
   senderId: string;

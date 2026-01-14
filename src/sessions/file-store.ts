@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
-import { type Session } from "./store.js";
-import logger from "../logger.js";
 import { config } from "../config.js";
+import logger from "../logger.js";
+import type { Session } from "./store.js";
 
 interface SerializedSession {
   senderId: string;
@@ -16,11 +16,36 @@ interface SerializedSession {
 let pendingSave: Promise<void> | null = null;
 
 /**
+ * Allow overriding the store path for testing
+ */
+let storePathOverride: string | null = null;
+
+/**
+ * Get the current store path (override or config default)
+ * Reads from environment dynamically to support test overrides
+ */
+function getStorePath(): string {
+  if (storePathOverride !== null) {
+    return storePathOverride;
+  }
+  // Read from env or use default (matches config.ts logic)
+  return process.env.SESSION_STORE_PATH || `${process.cwd()}/.sessions.json`;
+}
+
+/**
+ * Set a custom store path (for testing)
+ * Pass null to restore default behavior
+ */
+export function setStorePath(path: string | null): void {
+  storePathOverride = path;
+}
+
+/**
  * Load sessions from disk
  * Returns empty Map if file doesn't exist or is invalid
  */
 export async function loadSessions(): Promise<Map<string, Session>> {
-  const filePath = config.sessionStorePath;
+  const filePath = getStorePath();
 
   try {
     const data = await fs.readFile(filePath, "utf-8");
@@ -37,15 +62,24 @@ export async function loadSessions(): Promise<Map<string, Session>> {
       sessions.set(session.senderId, session);
     }
 
-    logger.info({ count: sessions.size, filePath }, "Loaded sessions from disk");
+    logger.info(
+      { count: sessions.size, filePath },
+      "Loaded sessions from disk",
+    );
     return sessions;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      logger.info({ filePath }, "Session file not found, starting with empty store");
+      logger.info(
+        { filePath },
+        "Session file not found, starting with empty store",
+      );
       return new Map();
     }
 
-    logger.error({ err, filePath }, "Failed to load sessions, starting with empty store");
+    logger.error(
+      { err, filePath },
+      "Failed to load sessions, starting with empty store",
+    );
     return new Map();
   }
 }
@@ -58,7 +92,7 @@ export async function saveSessions(
   sessions: Map<string, Session>,
 ): Promise<void> {
   const saveOp = async () => {
-    const filePath = config.sessionStorePath;
+    const filePath = getStorePath();
     const tempPath = `${filePath}.tmp`;
 
     try {
@@ -80,7 +114,10 @@ export async function saveSessions(
       // Atomic rename
       await fs.rename(tempPath, filePath);
 
-      logger.debug({ count: sessions.size, filePath }, "Saved sessions to disk");
+      logger.debug(
+        { count: sessions.size, filePath },
+        "Saved sessions to disk",
+      );
     } catch (err) {
       logger.error({ err, filePath }, "Failed to save sessions to disk");
       throw err;
