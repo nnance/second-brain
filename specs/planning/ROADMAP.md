@@ -34,11 +34,7 @@ Backlog → Designing → In Progress → Review → Completed
 
 ## Designing
 
-### Milestone: [background-process](./milestones/background-process/)
-
-- [ ] macOS background service (launchd script for running as a service)
-- [ ] GitHub main branch monitor (watch for changes to main, auto-pull and restart service)
-- [ ] File persistence for session store to support graceful restarts
+_No features currently being designed._
 
 ---
 
@@ -56,7 +52,11 @@ _No features currently in review._
 
 ## Completed
 
-_No features completed yet._
+### Milestone: [background-process](./milestones/background-process/)
+
+- [x] macOS background service (launchd script for running as a service)
+- [x] GitHub main branch monitor (watch for changes to main, auto-pull and restart service)
+- [x] File persistence for session store to support graceful restarts
 
 ---
 
