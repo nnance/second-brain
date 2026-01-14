@@ -7,6 +7,7 @@ interface Config {
   anthropicApiKey: string;
   claudeModel: string;
   sessionTimeoutMs: number;
+  reminderPollIntervalMs: number;
 }
 
 function loadConfig(): Config {
@@ -36,12 +37,26 @@ function loadConfig(): Config {
     sessionTimeoutMs = rawTimeout;
   }
 
+  // Validate reminder poll interval if provided
+  let reminderPollIntervalMs = 300000; // 5 minutes default
+  if (process.env.REMINDER_POLL_INTERVAL_MS) {
+    const rawInterval = Number(process.env.REMINDER_POLL_INTERVAL_MS);
+    if (Number.isNaN(rawInterval) || rawInterval <= 0) {
+      logger.fatal(
+        "REMINDER_POLL_INTERVAL_MS must be a positive number (milliseconds)",
+      );
+      process.exit(1);
+    }
+    reminderPollIntervalMs = rawInterval;
+  }
+
   return {
     vaultPath,
     logLevel: process.env.LOG_LEVEL || "info",
     anthropicApiKey,
     claudeModel: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     sessionTimeoutMs,
+    reminderPollIntervalMs,
   };
 }
 

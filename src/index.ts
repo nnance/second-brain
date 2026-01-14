@@ -5,11 +5,18 @@ import { handleUpdate } from "./git/updater.js";
 import { setupShutdownHandlers } from "./lifecycle.js";
 import logger from "./logger.js";
 import { startListener, stopListener } from "./messages/listener.js";
+import {
+  startReminderScheduler,
+  stopReminderScheduler,
+} from "./scheduler/index.js";
 import { FileSessionStore } from "./sessions/file-store.js";
 import { startTimeoutChecker, stopTimeoutChecker } from "./sessions/timeout.js";
 
 // Initialize session store (loads persisted sessions)
 const sessionStore = new FileSessionStore();
+
+// Track the primary recipient for reminders (first sender we see)
+let reminderRecipient: string | null = null;
 
 logger.info(
   {
@@ -31,6 +38,16 @@ startListener({
       },
       "Processing incoming message",
     );
+
+    // Start reminder scheduler with the first sender we see
+    if (!reminderRecipient) {
+      reminderRecipient = sender;
+      startReminderScheduler(sender);
+      logger.info(
+        { recipient: sender },
+        "Started reminder scheduler for first sender",
+      );
+    }
 
     // Get or create session for this sender
     const session = sessionStore.getOrCreateSession(sender);
@@ -118,6 +135,7 @@ setupShutdownHandlers({
   stopListener,
   stopTimeoutChecker,
   stopGitMonitor,
+  stopReminderScheduler,
 });
 
 logger.info("Listening for messages...");

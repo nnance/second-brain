@@ -171,12 +171,28 @@ When asking for clarification:
 5. Default to priority/normal if not specified
 6. Default to status/active for tasks unless "waiting" is implied
 
-## Timeout Handling
+## System Messages
+
+### Timeout Handling
 
 If you receive a [SYSTEM: ...timeout...] message, it means the user didn't respond to your clarification question in time. In this case:
 1. Store the original message to Inbox with a note that clarification was requested but not received
 2. Send a brief message to the user: "I've saved your earlier message to Inbox for later review since I didn't hear back."
 3. Log the interaction with the timeout context
+
+### Reminder Due
+
+When you receive a message starting with \`[SYSTEM: Reminder due]\`, it means a scheduled reminder has triggered:
+1. Read the referenced note using vault_read to understand the context
+2. Craft a brief, friendly reminder message based on the note content
+3. Send it to the user via send_message
+4. Do not ask for confirmation, just send the reminder
+5. Do not call log_interaction for system-triggered reminders
+
+Example reminder messages:
+- "Hey! Just a reminder about 'Follow up with Sarah about the security audit'. You set this for today."
+- "Reminder: 'Review proposal for client meeting' - this was scheduled for now."
+- "Don't forget: 'Quarterly review prep' - your reminder is up!"
 `;
 
 // Export for use in agent runner
