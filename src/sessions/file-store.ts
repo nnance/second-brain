@@ -68,6 +68,14 @@ export class FileSessionStore {
       const data = readFileSync(this.filePath, "utf-8");
       const serialized: SerializedSession[] = JSON.parse(data);
 
+      // Get session timeout from environment (default 1 hour)
+      const timeoutMs = Number.parseInt(
+        process.env.SESSION_TIMEOUT_MS ?? "3600000",
+        10,
+      );
+      const now = Date.now();
+      let expiredCount = 0;
+
       for (const item of serialized) {
         const session: Session = {
           senderId: item.senderId,
@@ -75,13 +83,23 @@ export class FileSessionStore {
           lastActivity: new Date(item.lastActivity),
           pendingInput: item.pendingInput,
         };
+
+        // Skip expired sessions
+        if (now - session.lastActivity.getTime() > timeoutMs) {
+          expiredCount++;
+          continue;
+        }
+
         this.sessions.set(session.senderId, session);
       }
 
-      logger.debug(
-        { count: this.sessions.size, filePath: this.filePath },
-        "Loaded sessions from file",
-      );
+      // Log restore summary at info level
+      if (this.sessions.size > 0 || expiredCount > 0) {
+        logger.info(
+          { restored: this.sessions.size, expired: expiredCount },
+          "Sessions restored from file",
+        );
+      }
     } catch (err) {
       logger.warn(
         { err, filePath: this.filePath },

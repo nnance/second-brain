@@ -123,6 +123,61 @@ describe("FileSessionStore", () => {
     });
   });
 
+  describe("session expiration on load", () => {
+    it("does not restore expired sessions", () => {
+      // Create a sessions file with an expired session (older than default 1hr timeout)
+      const expiredSession = {
+        senderId: "expired-user",
+        lastActivity: new Date(Date.now() - 4_000_000).toISOString(), // ~1.1 hours ago
+      };
+      const filePath = join(tempDir, "sessions.json");
+      writeFileSync(filePath, JSON.stringify([expiredSession]));
+
+      const store = new FileSessionStore(tempDir);
+
+      assert.strictEqual(store.getSession("expired-user"), undefined);
+      assert.deepStrictEqual(store.getAllSessions(), []);
+    });
+
+    it("restores non-expired sessions", () => {
+      // Create a sessions file with a recent session
+      const recentSession = {
+        senderId: "recent-user",
+        lastActivity: new Date(Date.now() - 60_000).toISOString(), // 1 minute ago
+      };
+      const filePath = join(tempDir, "sessions.json");
+      writeFileSync(filePath, JSON.stringify([recentSession]));
+
+      const store = new FileSessionStore(tempDir);
+
+      const session = store.getSession("recent-user");
+      assert.ok(session);
+      assert.strictEqual(session.senderId, "recent-user");
+    });
+
+    it("filters out only expired sessions when mixed", () => {
+      // Create a sessions file with both expired and recent sessions
+      const sessions = [
+        {
+          senderId: "expired-user",
+          lastActivity: new Date(Date.now() - 4_000_000).toISOString(),
+        },
+        {
+          senderId: "recent-user",
+          lastActivity: new Date(Date.now() - 60_000).toISOString(),
+        },
+      ];
+      const filePath = join(tempDir, "sessions.json");
+      writeFileSync(filePath, JSON.stringify(sessions));
+
+      const store = new FileSessionStore(tempDir);
+
+      assert.strictEqual(store.getSession("expired-user"), undefined);
+      assert.ok(store.getSession("recent-user"));
+      assert.strictEqual(store.getAllSessions().length, 1);
+    });
+  });
+
   describe("atomic write", () => {
     it("cleans up temp file on load", () => {
       const tempFilePath = join(tempDir, "sessions.json.tmp");
