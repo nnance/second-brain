@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "../logger.js";
@@ -38,15 +45,26 @@ export class FileSessionStore {
    * Load sessions from the JSON file
    */
   private load(): void {
-    try {
-      if (!existsSync(this.filePath)) {
-        logger.debug(
-          { filePath: this.filePath },
-          "Sessions file does not exist, starting with empty store",
-        );
-        return;
+    // Clean up any leftover temp file from interrupted write
+    const tempPath = `${this.filePath}.tmp`;
+    if (existsSync(tempPath)) {
+      try {
+        unlinkSync(tempPath);
+        logger.debug({ tempPath }, "Cleaned up leftover temp file");
+      } catch (err) {
+        logger.warn({ err, tempPath }, "Failed to clean up temp file");
       }
+    }
 
+    if (!existsSync(this.filePath)) {
+      logger.debug(
+        { filePath: this.filePath },
+        "Sessions file does not exist, starting with empty store",
+      );
+      return;
+    }
+
+    try {
       const data = readFileSync(this.filePath, "utf-8");
       const serialized: SerializedSession[] = JSON.parse(data);
 
@@ -64,19 +82,21 @@ export class FileSessionStore {
         { count: this.sessions.size, filePath: this.filePath },
         "Loaded sessions from file",
       );
-    } catch (error) {
-      logger.error(
-        { error, filePath: this.filePath },
-        "Failed to load sessions from file, starting with empty store",
+    } catch (err) {
+      logger.warn(
+        { err, filePath: this.filePath },
+        "Failed to load sessions, starting fresh",
       );
       this.sessions = new Map();
     }
   }
 
   /**
-   * Save sessions to the JSON file
+   * Save sessions to the JSON file using atomic write
    */
   private save(): void {
+    const tempPath = `${this.filePath}.tmp`;
+
     try {
       const serialized: SerializedSession[] = Array.from(
         this.sessions.values(),
@@ -87,11 +107,14 @@ export class FileSessionStore {
         pendingInput: session.pendingInput,
       }));
 
-      writeFileSync(
-        this.filePath,
-        JSON.stringify(serialized, null, 2),
-        "utf-8",
-      );
+      const data = JSON.stringify(serialized, null, 2);
+
+      // Write to temp file first
+      writeFileSync(tempPath, data, "utf-8");
+
+      // Atomic rename (on POSIX systems)
+      renameSync(tempPath, this.filePath);
+
       logger.debug(
         { count: this.sessions.size, filePath: this.filePath },
         "Saved sessions to file",
@@ -101,6 +124,15 @@ export class FileSessionStore {
         { error, filePath: this.filePath },
         "Failed to save sessions to file",
       );
+
+      // Clean up temp file if it exists
+      if (existsSync(tempPath)) {
+        try {
+          unlinkSync(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
     }
   }
 
