@@ -17,3 +17,7 @@ dist/
 # Editor
 .vscode/
 .idea/
+
+# Runtime data
+.sessions.json
+.sessions.json.tmp
