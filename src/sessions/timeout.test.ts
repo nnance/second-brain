@@ -1,12 +1,9 @@
 import assert from "node:assert";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import {
-  clearAllSessions,
-  createSession,
-  getAllSessions,
-  getSession,
-  updateSession,
-} from "./store.js";
+import { FileSessionStore } from "./file-store.js";
 import {
   checkTimeouts,
   isTimeoutCheckerRunning,
@@ -15,28 +12,32 @@ import {
 } from "./timeout.js";
 
 describe("Session Timeout", () => {
+  let tempDir: string;
+  let sessionStore: FileSessionStore;
+
   beforeEach(() => {
-    clearAllSessions();
+    tempDir = mkdtempSync(join(tmpdir(), "timeout-test-"));
+    sessionStore = new FileSessionStore(tempDir);
     stopTimeoutChecker();
   });
 
   afterEach(() => {
     stopTimeoutChecker();
-    clearAllSessions();
+    rmSync(tempDir, { recursive: true, force: true });
   });
 
   describe("startTimeoutChecker", () => {
     it("starts the timeout checker", () => {
       assert.strictEqual(isTimeoutCheckerRunning(), false);
 
-      startTimeoutChecker();
+      startTimeoutChecker(sessionStore);
 
       assert.strictEqual(isTimeoutCheckerRunning(), true);
     });
 
     it("does not start multiple checkers", () => {
-      startTimeoutChecker();
-      startTimeoutChecker();
+      startTimeoutChecker(sessionStore);
+      startTimeoutChecker(sessionStore);
 
       assert.strictEqual(isTimeoutCheckerRunning(), true);
     });
@@ -44,7 +45,7 @@ describe("Session Timeout", () => {
 
   describe("stopTimeoutChecker", () => {
     it("stops the timeout checker", () => {
-      startTimeoutChecker();
+      startTimeoutChecker(sessionStore);
       assert.strictEqual(isTimeoutCheckerRunning(), true);
 
       stopTimeoutChecker();
@@ -63,8 +64,11 @@ describe("Session Timeout", () => {
 
   describe("checkTimeouts", () => {
     it("ignores sessions within timeout window", async () => {
-      createSession("+15551234567");
-      updateSession("+15551234567", {
+      // Need to start checker to set the store
+      startTimeoutChecker(sessionStore);
+
+      sessionStore.createSession("+15551234567");
+      sessionStore.updateSession("+15551234567", {
         sdkSessionId: "session-123",
         pendingInput: "test message",
       });
@@ -72,15 +76,17 @@ describe("Session Timeout", () => {
       await checkTimeouts();
 
       // Session should still exist
-      const session = getSession("+15551234567");
+      const session = sessionStore.getSession("+15551234567");
       assert.ok(session);
       assert.strictEqual(session.sdkSessionId, "session-123");
     });
 
     it("identifies expired sessions correctly", async () => {
+      startTimeoutChecker(sessionStore);
+
       // Create a session with old lastActivity
-      createSession("+15551234567");
-      const session = getSession("+15551234567");
+      sessionStore.createSession("+15551234567");
+      const session = sessionStore.getSession("+15551234567");
       assert.ok(session);
 
       // Manually set lastActivity to 2 hours ago
@@ -89,15 +95,17 @@ describe("Session Timeout", () => {
       session.pendingInput = "test message";
 
       // Check that it's recognized as expired
-      const sessions = getAllSessions();
+      const sessions = sessionStore.getAllSessions();
       const age = Date.now() - sessions[0].lastActivity.getTime();
       assert.ok(age >= 3600000); // Should be at least 1 hour old
     });
 
     it("cleans up expired sessions without pending input", async () => {
+      startTimeoutChecker(sessionStore);
+
       // Create a session with old lastActivity but no pendingInput
-      createSession("+15551234567");
-      const session = getSession("+15551234567");
+      sessionStore.createSession("+15551234567");
+      const session = sessionStore.getSession("+15551234567");
       assert.ok(session);
 
       // Manually set lastActivity to 2 hours ago (no pendingInput)
@@ -107,22 +115,22 @@ describe("Session Timeout", () => {
       await checkTimeouts();
 
       // Session should be cleaned up (deleted)
-      const afterSession = getSession("+15551234567");
+      const afterSession = sessionStore.getSession("+15551234567");
       assert.strictEqual(afterSession, undefined);
     });
   });
 
   describe("session cleanup", () => {
     it("sessions can be manually cleaned up", () => {
-      createSession("+15551234567");
-      updateSession("+15551234567", { pendingInput: "test" });
+      sessionStore.createSession("+15551234567");
+      sessionStore.updateSession("+15551234567", { pendingInput: "test" });
 
-      const before = getAllSessions();
+      const before = sessionStore.getAllSessions();
       assert.strictEqual(before.length, 1);
 
-      clearAllSessions();
+      sessionStore.clearAllSessions();
 
-      const after = getAllSessions();
+      const after = sessionStore.getAllSessions();
       assert.strictEqual(after.length, 0);
     });
   });

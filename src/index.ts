@@ -105,7 +105,7 @@ startListener({
 });
 
 // Start timeout checker for session expiration
-startTimeoutChecker();
+startTimeoutChecker(sessionStore);
 
 // Setup graceful shutdown handlers
 setupShutdownHandlers({

@@ -1,19 +1,21 @@
 import { runAgent } from "../agent/runner.js";
 import { config } from "../config.js";
 import logger from "../logger.js";
-import {
-  type Session,
-  deleteSession,
-  getAllSessions,
-  getSession,
-} from "./store.js";
+import type { FileSessionStore } from "./file-store.js";
+import type { Session } from "./store.js";
 
 const TIMEOUT_CHECK_INTERVAL_MS = 60000; // Check every minute
 
 let timeoutInterval: NodeJS.Timeout | null = null;
+let sessionStore: FileSessionStore | null = null;
 
-export function startTimeoutChecker(): void {
+/**
+ * Initialize and start the session timeout checker
+ */
+export function startTimeoutChecker(store: FileSessionStore): void {
   if (timeoutInterval) return;
+
+  sessionStore = store;
 
   logger.info(
     { timeoutMs: config.sessionTimeoutMs },
@@ -33,19 +35,25 @@ export function stopTimeoutChecker(): void {
   if (timeoutInterval) {
     clearInterval(timeoutInterval);
     timeoutInterval = null;
+    sessionStore = null;
     logger.info("Stopped session timeout checker");
   }
 }
 
 export async function checkTimeouts(): Promise<void> {
+  if (!sessionStore) {
+    logger.warn("Timeout checker called but no session store configured");
+    return;
+  }
+
   const now = Date.now();
-  const sessions = getAllSessions();
+  const sessions = sessionStore.getAllSessions();
 
   for (const session of sessions) {
     const age = now - session.lastActivity.getTime();
 
     if (age >= config.sessionTimeoutMs) {
-      // H3 fix: Only process sessions that have pending clarification input
+      // Only process sessions that have pending clarification input
       if (session.pendingInput) {
         logger.info(
           {
@@ -63,14 +71,16 @@ export async function checkTimeouts(): Promise<void> {
           { senderId: session.senderId, ageMs: age },
           "Cleaning up stale session without pending input",
         );
-        deleteSession(session.senderId);
+        sessionStore.deleteSession(session.senderId);
       }
     }
   }
 }
 
 async function handleTimeout(session: Session): Promise<void> {
-  // H1 fix: Capture the lastActivity time at start of processing
+  if (!sessionStore) return;
+
+  // Capture the lastActivity time at start of processing
   const processingStartTime = session.lastActivity.getTime();
 
   try {
@@ -92,13 +102,13 @@ async function handleTimeout(session: Session): Promise<void> {
       "Failed to handle timeout",
     );
   } finally {
-    // H1 fix: Only delete if session wasn't updated during processing
-    const currentSession = getSession(session.senderId);
+    // Only delete if session wasn't updated during processing
+    const currentSession = sessionStore.getSession(session.senderId);
     if (
       currentSession &&
       currentSession.lastActivity.getTime() === processingStartTime
     ) {
-      deleteSession(session.senderId);
+      sessionStore.deleteSession(session.senderId);
     } else {
       logger.info(
         { senderId: session.senderId },
