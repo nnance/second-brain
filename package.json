@@ -18,7 +18,8 @@
     "service:status": "bash scripts/service-status.sh",
     "service:start": "launchctl start com.second-brain.agent",
     "service:stop": "launchctl stop com.second-brain.agent",
-    "service:restart": "launchctl kickstart -k gui/$(id -u)/com.second-brain.agent"
+    "service:restart": "launchctl kickstart -k gui/$(id -u)/com.second-brain.agent",
+    "status": "tsx scripts/status.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
