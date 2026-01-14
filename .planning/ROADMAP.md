@@ -15,7 +15,7 @@ None
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 1: Session Persistence** — File-based session storage replacing in-memory Map
-- [ ] **Phase 2: Graceful Lifecycle** — Shutdown/startup with state preservation and restoration
+- [x] **Phase 2: Graceful Lifecycle** — Shutdown/startup with state preservation and restoration
 - [ ] **Phase 3: launchd Service** — macOS service configuration with KeepAlive
 - [ ] **Phase 4: Git Monitor** — Watch main branch for changes
 - [ ] **Phase 5: Auto-Update** — Pull changes and restart service automatically
@@ -40,9 +40,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Graceful shutdown with session save
-- [ ] 02-02: Session restore on startup
-- [ ] 02-03: Lifecycle integration tests
+- [x] 02-01: Session restore on startup
+- [x] 02-02: Graceful shutdown with pending save wait
+- [x] 02-03: Lifecycle integration tests
 
 ### Phase 3: launchd Service
 **Goal**: Configure launchd plist for auto-start on login with KeepAlive crash recovery
@@ -94,7 +94,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Session Persistence | 2/2 | Complete | 2026-01-13 |
-| 2. Graceful Lifecycle | 0/3 | Not started | - |
+| 2. Graceful Lifecycle | 3/3 | Complete | 2026-01-14 |
 | 3. launchd Service | 0/3 | Not started | - |
 | 4. Git Monitor | 0/2 | Not started | - |
 | 5. Auto-Update | 0/2 | Not started | - |
