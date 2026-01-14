@@ -208,6 +208,13 @@ export class FileSessionStore {
     this.sessions.clear();
     this.save();
   }
+
+  /**
+   * Force save all sessions to disk (for graceful shutdown)
+   */
+  flush(): void {
+    this.save();
+  }
 }
 
 // Default instance for module-level functions
