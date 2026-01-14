@@ -1,5 +1,7 @@
 import { runAgent } from "./agent/runner.js";
 import { config } from "./config.js";
+import { startGitMonitor, stopGitMonitor } from "./git/monitor.js";
+import { handleUpdate } from "./git/updater.js";
 import { setupShutdownHandlers } from "./lifecycle.js";
 import logger from "./logger.js";
 import { startListener, stopListener } from "./messages/listener.js";
@@ -107,11 +109,15 @@ startListener({
 // Start timeout checker for session expiration
 startTimeoutChecker(sessionStore);
 
+// Start git monitor for auto-updates
+startGitMonitor(handleUpdate);
+
 // Setup graceful shutdown handlers
 setupShutdownHandlers({
   sessionStore,
   stopListener,
   stopTimeoutChecker,
+  stopGitMonitor,
 });
 
 logger.info("Listening for messages...");
