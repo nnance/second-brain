@@ -1,102 +1,167 @@
-# Roadmap: Second Brain Background Service
+# Background Process - Implementation Plan
 
 ## Overview
 
-Transform Second Brain from a manually-started terminal process to a production-ready macOS background service. The journey: first make sessions survive restarts (persistence), then make the service manage its own lifecycle (launchd), then make it stay current with code changes (git auto-update), and finally verify the complete system works end-to-end.
+Implementation plan for transforming Second Brain into a production-ready macOS background service with file persistence, auto-updates, and self-healing capabilities.
 
-## Domain Expertise
+## Development Workflow
 
-None
+```
+Phase N
+  ├── Ticket N.1 → build → test → verify → commit
+  ├── Ticket N.2 → build → test → verify → commit
+  └── Ticket N.M → build → test → verify → commit
+  ⏸️ STOP — Manual review
 
-## Phases
+Phase N+1 (after approval)
+  └── ...
+```
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+**Within each phase:** Claude Code works autonomously, completing each ticket fully (build passes, tests pass) before committing and moving to the next ticket.
 
-- [ ] **Phase 1: Session Persistence** — File-based session storage replacing in-memory Map
-- [ ] **Phase 2: Graceful Lifecycle** — Shutdown/startup with state preservation and restoration
-- [ ] **Phase 3: launchd Service** — macOS service configuration with KeepAlive
-- [ ] **Phase 4: Git Monitor** — Watch main branch for changes
-- [ ] **Phase 5: Auto-Update** — Pull changes and restart service automatically
-- [ ] **Phase 6: Integration** — End-to-end system verification
+**Between phases:** Development stops for manual review. Verify the checkpoint criteria, then kick off the next phase.
+
+## Phase Summary
+
+| Phase | Description | Checkpoint |
+|-------|-------------|------------|
+| 1 | Session Persistence | Sessions survive process restart |
+| 2 | Graceful Lifecycle | Clean shutdown saves state, startup restores it |
+| 3 | Service Logging | Logs written to file with rotation |
+| 4 | launchd Service | Service installs and runs via launchd |
+| 5 | Git Monitor & Auto-Update | Service detects and pulls new commits |
+| 6 | Health Check & Integration | Status command works, end-to-end verified |
+
+## Directory Structure
+
+```
+specs/planning/milestones/background-process/
+├── DESIGN-SPEC.md
+├── IMPLEMENTATION.md
+├── phase-1/
+│   ├── README.md
+│   ├── ticket-1.1.md
+│   ├── ticket-1.2.md
+│   └── ticket-1.3.md
+├── phase-2/
+│   ├── README.md
+│   ├── ticket-2.1.md
+│   ├── ticket-2.2.md
+│   └── ticket-2.3.md
+├── phase-3/
+│   ├── README.md
+│   ├── ticket-3.1.md
+│   └── ticket-3.2.md
+├── phase-4/
+│   ├── README.md
+│   ├── ticket-4.1.md
+│   ├── ticket-4.2.md
+│   └── ticket-4.3.md
+├── phase-5/
+│   ├── README.md
+│   ├── ticket-5.1.md
+│   ├── ticket-5.2.md
+│   └── ticket-5.3.md
+└── phase-6/
+    ├── README.md
+    ├── ticket-6.1.md
+    └── ticket-6.2.md
+```
 
 ## Phase Details
 
 ### Phase 1: Session Persistence
-**Goal**: Replace in-memory session Map with file-based storage that survives process restarts
-**Depends on**: Nothing (first phase)
-**Research**: Unlikely (Node.js fs/JSON, established patterns)
-**Plans**: 3 plans
 
-Plans:
-- [ ] 01-01: Session file store implementation
-- [ ] 01-02: Migrate existing store.ts to use file backend
-- [ ] 01-03: Session persistence tests
+**Goal:** Replace in-memory session Map with file-based storage
+
+| Ticket | Description |
+|--------|-------------|
+| 1.1 | Create FileSessionStore class with JSON persistence |
+| 1.2 | Add atomic write with temp file rename |
+| 1.3 | Write unit tests for FileSessionStore |
+
+**Checkpoint:** Sessions persist to `~/.second-brain/sessions.json` and survive `npm start` restart.
+
+---
 
 ### Phase 2: Graceful Lifecycle
-**Goal**: Implement clean shutdown that saves state and startup that restores it
-**Depends on**: Phase 1
-**Research**: Unlikely (Node.js signal handling, existing shutdown code)
-**Plans**: 3 plans
 
-Plans:
-- [ ] 02-01: Graceful shutdown with session save
-- [ ] 02-02: Session restore on startup
-- [ ] 02-03: Lifecycle integration tests
+**Goal:** Implement clean shutdown and startup with state preservation
 
-### Phase 3: launchd Service
-**Goal**: Configure launchd plist for auto-start on login with KeepAlive crash recovery
-**Depends on**: Phase 2
-**Research**: Likely (launchd plist configuration)
-**Research topics**: launchd plist structure, KeepAlive options, environment variables, StandardOutPath/StandardErrorPath logging
-**Plans**: 3 plans
+| Ticket | Description |
+|--------|-------------|
+| 2.1 | Add SIGTERM/SIGINT handlers with session save |
+| 2.2 | Implement session restore on startup |
+| 2.3 | Add lifecycle integration tests |
 
-Plans:
-- [ ] 03-01: launchd plist template creation
-- [ ] 03-02: Install/uninstall scripts
-- [ ] 03-03: Service management documentation
+**Checkpoint:** Kill process with Ctrl+C, restart, verify sessions restored.
 
-### Phase 4: Git Monitor
-**Goal**: Watch main branch for new commits using local git commands
-**Depends on**: Phase 3
-**Research**: Unlikely (child_process git commands, polling pattern)
-**Plans**: 2 plans
+---
 
-Plans:
-- [ ] 04-01: Git change detection module
-- [ ] 04-02: Polling integration with main process
+### Phase 3: Service Logging
 
-### Phase 5: Auto-Update
-**Goal**: Pull changes and trigger service restart when new commits detected
-**Depends on**: Phase 4
-**Research**: Unlikely (git pull + launchctl restart, builds on earlier phases)
-**Plans**: 2 plans
+**Goal:** Configure file-based logging with rotation
 
-Plans:
-- [ ] 05-01: Git pull and restart logic
-- [ ] 05-02: Update flow integration
+| Ticket | Description |
+|--------|-------------|
+| 3.1 | Add pino file transport configuration |
+| 3.2 | Implement log rotation (7-day retention) |
 
-### Phase 6: Integration
-**Goal**: End-to-end verification of complete background service system
-**Depends on**: Phase 5
-**Research**: Unlikely (testing existing system behavior)
-**Plans**: 2 plans
+**Checkpoint:** Logs appear in `~/Library/Logs/second-brain/`, old logs auto-deleted.
 
-Plans:
-- [ ] 06-01: Integration test suite
-- [ ] 06-02: Manual verification checklist
+---
 
-## Progress
+### Phase 4: launchd Service
 
-**Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
+**Goal:** Create launchd plist and install/uninstall scripts
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Session Persistence | 0/3 | Not started | - |
-| 2. Graceful Lifecycle | 0/3 | Not started | - |
-| 3. launchd Service | 0/3 | Not started | - |
-| 4. Git Monitor | 0/2 | Not started | - |
-| 5. Auto-Update | 0/2 | Not started | - |
-| 6. Integration | 0/2 | Not started | - |
+| Ticket | Description |
+|--------|-------------|
+| 4.1 | Create launchd plist template |
+| 4.2 | Write install/uninstall npm scripts |
+| 4.3 | Document service management commands |
+
+**Checkpoint:** `npm run service:install` installs service, starts on login, restarts on crash.
+
+---
+
+### Phase 5: Git Monitor & Auto-Update
+
+**Goal:** Watch main branch and auto-update on new commits
+
+| Ticket | Description |
+|--------|-------------|
+| 5.1 | Create git change detection module |
+| 5.2 | Implement auto-pull and rebuild logic |
+| 5.3 | Add self-restart trigger |
+
+**Checkpoint:** Push to main, verify service pulls changes and restarts within poll interval.
+
+---
+
+### Phase 6: Health Check & Integration
+
+**Goal:** Status command and end-to-end verification
+
+| Ticket | Description |
+|--------|-------------|
+| 6.1 | Implement `npm run status` command |
+| 6.2 | End-to-end integration test checklist |
+
+**Checkpoint:** All features work together, manual verification complete.
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SECOND_BRAIN_DATA_DIR` | `~/.second-brain` | Data directory for sessions |
+| `LOG_FILE_PATH` | `~/Library/Logs/second-brain` | Log output directory |
+| `LOG_RETENTION_DAYS` | `7` | Number of days to keep log files |
+| `GIT_POLL_INTERVAL_MS` | `300000` (5 min) | Git polling interval |
+
+## Reference Documents
+
+- [Design Document](./DESIGN-SPEC.md)
+- [Project CLAUDE.md](/CLAUDE.md)
